@@ -15,7 +15,7 @@ Claude Code にセッション間の記憶を持たせる Claude Code Skill。
 ## インストール
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yourname/claude-memory-sync/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/install.sh | bash
 ```
 
 ## 使い方
@@ -47,7 +47,7 @@ cm              # 記憶を手動でGit同期（複数PC運用時）
 
 ```bash
 # 別PCでの初回セットアップ（同じコマンド）
-curl -fsSL https://raw.githubusercontent.com/yourname/claude-memory-sync/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/install.sh | bash
 # → 既存の記憶リポジトリURLを入力するだけ
 ```
 

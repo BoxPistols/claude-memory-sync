@@ -24,7 +24,7 @@ Claude Code は優秀だが、**セッションをまたいで記憶が完全に
 
 ## 作ったもの
 
-**[claude-memory-sync](https://github.com/yourname/claude-memory-sync)**
+**[claude-memory-sync](https://github.com/BoxPistols/claude-memory-sync)**
 
 - Claude Code の hook 機構を使い、セッション開始時に記憶を自動注入
 - 記憶は Git 管理のプライベートリポジトリに保存
@@ -33,7 +33,7 @@ Claude Code は優秀だが、**セッションをまたいで記憶が完全に
 
 ```bash
 # インストール one-liner
-curl -fsSL https://raw.githubusercontent.com/yourname/claude-memory-sync/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/install.sh | bash
 ```
 
 ## claude-subconscious との比較
@@ -159,7 +159,7 @@ fi
 ### one-liner インストール
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yourname/claude-memory-sync/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/install.sh | bash
 ```
 
 インストーラが以下を自動でやる。
@@ -175,7 +175,7 @@ curl -fsSL https://raw.githubusercontent.com/yourname/claude-memory-sync/main/in
 2台目以降も同じコマンド一発。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yourname/claude-memory-sync/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/install.sh | bash
 # → 既存の記憶リポジトリURLを入力するだけ
 ```
 
@@ -262,4 +262,4 @@ $MEMORY_DIR/repos/${REPO}.md に箇条書きで追記してください。
 
 Claude Code を毎日ヘビーユースしている人、複数リポジトリを並行している人、複数PCを切り替えている人に特に効くと思う。
 
-リポジトリはこちら → https://github.com/yourname/claude-memory-sync
+リポジトリはこちら → https://github.com/BoxPistols/claude-memory-sync
