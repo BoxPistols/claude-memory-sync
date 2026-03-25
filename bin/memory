@@ -1,5 +1,5 @@
 #!/bin/bash
-# cm - claude-memory push
+# memory - claude-memory push
 # 記憶リポジトリを手動で同期する
 
 set -euo pipefail

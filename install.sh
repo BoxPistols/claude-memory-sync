@@ -28,12 +28,12 @@ fi
 # 実行権限を付与
 chmod +x "$SKILL_DIR/hooks/start.sh"
 chmod +x "$SKILL_DIR/hooks/stop.sh"
-chmod +x "$SKILL_DIR/bin/cm"
+chmod +x "$SKILL_DIR/bin/memory"
 
-# cm を PATH に通す
-BIN_LINK="${HOME}/.local/bin/cm"
+# memory を PATH に通す
+BIN_LINK="${HOME}/.local/bin/memory"
 mkdir -p "${HOME}/.local/bin"
-ln -sf "$SKILL_DIR/bin/cm" "$BIN_LINK"
+ln -sf "$SKILL_DIR/bin/memory" "$BIN_LINK"
 
 echo "  ✓ Skill をインストールしました: $SKILL_DIR"
 
@@ -82,7 +82,7 @@ echo "✅ セットアップ完了"
 echo ""
 echo "使い方:"
 echo "  claude          # 次回起動から記憶が自動注入されます"
-echo "  cm              # 記憶を手動でGit同期"
+echo "  memory          # 記憶を手動でGit同期"
 echo ""
 echo "記憶の編集:"
 echo "  $MEMORY_DIR/global.md      # 全PJ共通の方針"

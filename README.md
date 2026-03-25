@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/
 
 ```bash
 claude          # いつも通り起動するだけ。記憶が自動注入される
-cm              # 記憶を手動でGit同期（複数PC運用時）
+memory              # 記憶を手動でGit同期（複数PC運用時）
 ```
 
 作業中に Claudeへ一言：

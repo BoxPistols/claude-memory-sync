@@ -168,7 +168,7 @@ curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/
 2. 記憶リポジトリのGit URLを聞いてクローン（またはローカル初期化）
 3. `global.md` のテンプレートを配置
 4. `~/.claude/settings.json` に hook を登録
-5. `cm` コマンドを `~/.local/bin/` にシンボリックリンク
+5. `memory` コマンドを `~/.local/bin/` にシンボリックリンク
 
 ### 別PCへの展開
 
@@ -198,12 +198,12 @@ claude    # いつも通り起動するだけ
 ```
 
 Claude が `~/.claude-memory/repos/{リポジトリ名}.md` に追記する。
-`Stop` hook で自動push されるので `cm` は基本不要。
+`Stop` hook で自動push されるので `memory` は基本不要。
 
 ### 手動同期（複数PC切り替え時）
 
 ```bash
-cm    # pull → commit → push
+memory    # pull → commit → push
 ```
 
 ## 複数リポジトリの運用
