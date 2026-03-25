@@ -1,0 +1,32 @@
+#!/bin/bash
+# cm - claude-memory push
+# 記憶リポジトリを手動で同期する
+
+set -euo pipefail
+
+MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
+
+if [ ! -d "$MEMORY_DIR/.git" ]; then
+  echo "❌ 記憶リポジトリが見つかりません: $MEMORY_DIR"
+  echo "   install.sh を実行してセットアップしてください"
+  exit 1
+fi
+
+cd "$MEMORY_DIR"
+
+git pull --quiet --ff-only 2>/dev/null || true
+
+if [ -z "$(git status --porcelain)" ]; then
+  echo "✓ 変更なし（最新の状態です）"
+  exit 0
+fi
+
+REPO=$(basename "$(OLDPWD=$(pwd); cd "${OLDPWD}" && pwd)")
+TIMESTAMP=$(date '+%m/%d %H:%M')
+
+git add .
+git status --short
+git commit -m "manual: ${TIMESTAMP}" --quiet
+git push --quiet
+
+echo "✓ 記憶を同期しました"
