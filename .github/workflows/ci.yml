@@ -55,6 +55,10 @@ jobs:
           git config user.email test@example.com
           git config user.name Tester
           echo 'safe content' > global.md
+          # 初期状態を commit しておく — 各テストは使い終わったら
+          # git checkout で clean 状態に戻せる
+          git add global.md
+          git commit -q -m "initial test fixture"
       - name: clean changes should pass (exit 0)
         run: bash hooks/scan-secrets.sh
       - name: OpenAI-style key should fail (exit 1)
@@ -64,15 +68,19 @@ jobs:
             echo "FAIL: scanner did not detect leaked key"
             exit 1
           fi
+          # 次のテストのために clean 状態に戻す
+          git -C "$CLAUDE_MEMORY_DIR" checkout -- global.md
       - name: PEM private key should fail (exit 1)
         run: |
-          git -C "$CLAUDE_MEMORY_DIR" checkout global.md
           printf -- '-----BEGIN RSA PRIVATE KEY-----\nMIIEow==\n-----END RSA PRIVATE KEY-----\n' >> "$CLAUDE_MEMORY_DIR/global.md"
           if bash hooks/scan-secrets.sh; then
             echo "FAIL: scanner did not detect PEM key"
             exit 1
           fi
+          git -C "$CLAUDE_MEMORY_DIR" checkout -- global.md
       - name: bypass flag should allow even with secret
         env:
           CLAUDE_MEMORY_SKIP_SECRET_SCAN: "1"
-        run: bash hooks/scan-secrets.sh
+        run: |
+          echo 'leaked: sk-proj-abcdef1234567890abcdef1234567890' >> "$CLAUDE_MEMORY_DIR/global.md"
+          bash hooks/scan-secrets.sh
