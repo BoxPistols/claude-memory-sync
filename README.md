@@ -376,20 +376,57 @@ curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/
 
 ## セキュリティ
 
-- 記憶ファイルには **方針・パターン・禁止事項のみ** を書きましょう。コードは書かない
-- シークレットスキャナが commit 前に以下のパターンを検出します:
-  - OpenAI / Anthropic: `sk-*`
-  - GitHub: `ghp_*`, `github_pat_*`
-  - AWS: `AKIA*`
-  - Google: `AIza*`
-  - Slack: `xox[baprs]-*`
-  - Stripe: `sk_live_*`, `rk_live_*`
+### 信頼モデル (必読)
+
+本ツールは以下の前提で動きます:
+
+1. **memory リポジトリに書き込める人 = あなたの Claude Code の振る舞いを実質的に操作できる人**です。memory repo の内容は `~/.claude/CLAUDE.md` に注入され、Claude Code の全セッションのプロンプトになります。プロンプトインジェクションで情報漏洩・不正指示を仕込むことが可能です
+2. したがって memory repo は **必ず private** にしてください。public にすると全世界がコンテンツを見られるだけでなく、PR 経由であなたの CLAUDE.md に任意のプロンプトを仕込まれる可能性があります
+3. **collaborator 権限を与える相手は慎重に選んで**ください。信頼できない相手に write 権限を与えるのは、あなたの Claude セッションを渡すのと等価です
+4. `~/.claude/skills/memory-sync/hooks/*.sh` を上書きできる人 (= あなたのホームディレクトリに書き込める人) は、セッション開始のたびに任意コードを実行できます。**ホームディレクトリのパーミッションを 700 / 750 に保って**ください
+
+### 組み込みの防御
+
+- **シークレットスキャナ**が commit 前と push 前 (未 push 履歴) の両方を scan します
+- 検出パターン (v0.1.0):
+  - OpenAI / Anthropic: `sk-*` / `sk_live_*`
+  - GitHub: `ghp_*` / `gho_*` / `ghu_*` / `ghs_*` / `ghr_*` / `github_pat_*`
+  - AWS: `AKIA*` / `ASIA*`
+  - Google: `AIza*` / `GOCSPX-*`
+  - Azure: `DefaultEndpointsProtocol=...AccountKey=...`
+  - Slack: `xox[baprs]-*` / webhook `T.../B.../*`
+  - Stripe: `sk_live_*` / `rk_live_*`
+  - npm: `npm_*`
+  - Docker Hub: `dckr_pat_*`
+  - DigitalOcean: `dop_v1_*`
+  - Databricks: `dapi*`
+  - Shopify: `shpat_*` / `shpca_*`
+  - GitLab: `glpat-*`
   - Hugging Face: `hf_*`
+  - Replicate: `r8_*`
   - JWT (3 セグメント形式)
   - PEM private key ブロック
-- 一時的にバイパスが必要な場合は `CLAUDE_MEMORY_SKIP_SECRET_SCAN=1` を明示的に設定
-- 記憶リポジトリは **プライベート** Git リポジトリに置くことを強く推奨
-- 本スキャナは best-effort です。真剣な検査には [trufflehog](https://github.com/trufflesecurity/trufflehog) / [gitleaks](https://github.com/gitleaks/gitleaks) 等を併用してください
+- **入力サニタイズ**: memory ファイル内に偽の `<!-- claude-memory-sync:begin -->` / `:end` マーカーが混入していても、注入時に grep で除去されるので CLAUDE.md の構造が破壊されない (プロンプトインジェクションでの永続汚染を防止)
+- **マーカー付き hook 管理**: `_claude_memory_sync: true` プロパティで本ツール所有の hook を識別。他の hook と衝突しない、誤って壊さない
+- **Atomic settings.json 書き込み**: 一時ファイル + rename で、install 途中のクラッシュでも `~/.claude/settings.json` を破損させない
+- **ログは自ユーザ領域に**: pull 失敗などのログは `~/.claude/logs/` 以下 (mode 700) に保存。`/tmp` 経由の symlink 攻撃や情報漏洩を避ける
+
+### 組み込みで防げないもの
+
+- **memory repo に collaborator として書き込める攻撃者**: 上記信頼モデルの通り、これはツールの守備範囲外です。collaborator 管理を慎重に
+- **本スキャナのパターン漏れ**: best-effort です。カスタムのシークレット形式、長期的な keyスキーマ変更、難読化された秘密情報は検出できません。真剣な検査には [trufflehog](https://github.com/trufflesecurity/trufflehog) / [gitleaks](https://github.com/gitleaks/gitleaks) を併用してください
+- **MITM at install time**: `curl | bash` でインストールするので、TLS が破られたら任意コードが実行されます。これを避けたい場合は手動 clone + 確認後に `./install.sh` を実行してください
+
+### バイパス
+
+一時的な解除手段:
+
+```bash
+CLAUDE_MEMORY_SKIP_SECRET_SCAN=1 cm     # シークレットスキャナをバイパス
+CLAUDE_MEMORY_AUTO_PUSH=1 claude        # セッション終了時に自動 push する
+```
+
+後者は危険 (push 前に人間が確認できない) なので、**信頼できる環境でのみ** 使ってください。
 
 ---
 

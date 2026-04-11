@@ -90,26 +90,31 @@ case "$CMD" in
     if has_remote; then
       # rebase で取り込み (fast-forward 不可能な場合でも極力進める)
       echo "▶ git pull --rebase..."
-      if ! git pull --rebase --quiet 2>/tmp/cm-pull.err; then
+      ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-cm-pull.XXXXXX")
+      if ! git pull --rebase --quiet 2>"$ERR_FILE"; then
         echo "" >&2
         echo "❌ pull --rebase 失敗" >&2
         echo "" >&2
-        cat /tmp/cm-pull.err >&2 || true
+        cat "$ERR_FILE" >&2 || true
         echo "" >&2
         echo "  手動で競合を解決してから再度 cm sync を実行してください" >&2
-        rm -f /tmp/cm-pull.err
+        rm -f "$ERR_FILE"
         exit 1
       fi
-      rm -f /tmp/cm-pull.err
+      rm -f "$ERR_FILE"
     fi
 
     if [ -z "$(git status --porcelain)" ]; then
       echo "✓ 変更なし (最新の状態です)"
       show_tracking_state
+      # push 可能な未 push commit があるか念のため scan-secrets で検査
+      if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
+        CLAUDE_MEMORY_SCAN_MODE=history "$SKILL_DIR/hooks/scan-secrets.sh" || exit 1
+      fi
       exit 0
     fi
 
-    # シークレットスキャナを走らせる
+    # シークレットスキャナを走らせる (未 commit 変更)
     if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
       if ! "$SKILL_DIR/hooks/scan-secrets.sh"; then
         exit 1
@@ -126,19 +131,31 @@ case "$CMD" in
     echo "✓ commit 完了"
 
     if has_remote; then
+      # push 前に歴史側もスキャンする (過去セッションで scan をバイパスした
+      # secret commit が混入している可能性に備える)
+      if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
+        if ! CLAUDE_MEMORY_SCAN_MODE=history "$SKILL_DIR/hooks/scan-secrets.sh"; then
+          echo "" >&2
+          echo "❌ push を中止: 未 push commit にシークレットの痕跡を検出" >&2
+          echo "  上のメッセージを確認し、必要であれば git rebase -i で commit を修正してください" >&2
+          exit 1
+        fi
+      fi
+
       echo "▶ git push..."
-      if git push --quiet 2>/tmp/cm-push.err; then
+      ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-cm-push.XXXXXX")
+      if git push --quiet 2>"$ERR_FILE"; then
         echo "✓ push 完了"
       else
         echo "" >&2
         echo "❌ push 失敗" >&2
-        cat /tmp/cm-push.err >&2 || true
+        cat "$ERR_FILE" >&2 || true
         echo "" >&2
         echo "  ネットワーク / 認証 / 上流分岐を確認してください" >&2
-        rm -f /tmp/cm-push.err
+        rm -f "$ERR_FILE"
         exit 1
       fi
-      rm -f /tmp/cm-push.err
+      rm -f "$ERR_FILE"
     else
       echo "✓ (リモート未設定のため push はスキップ)"
     fi

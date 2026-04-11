@@ -4,6 +4,47 @@
 
 ## [Unreleased]
 
+### Security (post-v0.1.0 監査で発見・修正)
+
+- **[CRITICAL] プロンプトインジェクション脆弱性修正 (S-3)** — 攻撃者が memory
+  repo に偽の `<!-- claude-memory-sync:begin -->` / `:end` マーカーを含む
+  global.md を push することで、CLAUDE.md の注入ブロック構造を破壊し、
+  攻撃プロンプトを永続的に残留させられる脆弱性を修正。
+  `hooks/start.sh` の cat 時に grep -F で注入マーカー行を除去する
+  サニタイズを追加し、`hooks/cleanup.sh` の awk を「複数 begin/end を
+  まとめて剥がす」ロジックに変更した
+- **[HIGH] /tmp symlink 攻撃対策 (S-1 / S-2)** — ログおよびエラー出力の
+  保存先を `/tmp/claude-memory-sync*.log` から `~/.claude/logs/` (mode 700)
+  に移動。共有システム上での pre-plant symlink による settings.json 書き換え
+  や、git pull エラー (URL / 認証情報を含みうる) の情報漏洩を防ぐ
+- **[HIGH] settings.json の atomic write (S-7)** — `bin/setup.js` /
+  `bin/uninstall.js` が `writeFileSync` で直接上書きしていたのを、
+  一時ファイル + `renameSync` (POSIX atomic rename) に変更。install 途中の
+  Ctrl+C / disk full / クラッシュで Claude Code の settings.json が
+  破損するリスクを排除。ついでに chmod 0600 も設定
+- **[HIGH] scan-secrets の history scan 対応 (S-9)** — 以前は未 commit
+  差分のみ scan していた。過去セッションで scanner を bypass して secret が
+  commit されていた場合、push 時に検出できなかった。`cm sync` の push 前に
+  `CLAUDE_MEMORY_SCAN_MODE=history` で `@{u}..HEAD` の diff を scan する
+  ように変更
+- **[MEDIUM] scan-secrets のパターン追加 (S-10)** — 以下を追加:
+  `gho_/ghu_/ghs_/ghr_` (GitHub OAuth/server token 亜種), `ASIA`
+  (AWS temporary key), `GOCSPX-` (Google OAuth secret), Azure Storage
+  connection string, Slack webhook, `npm_*`, `dckr_pat_*`, `dop_v1_*`,
+  `dapi*` (Databricks), `shpat_*` / `shpca_*` (Shopify), `glpat-*`
+  (GitLab), `r8_*` (Replicate)
+- **[MEDIUM] git index file mode 修正 (S-18)** — `install.sh` /
+  `hooks/*.sh` / `bin/cm` を 100644 から 100755 にして、clone 直後から
+  executable になるようにした
+- **[MEDIUM] install.sh が clone 元 URL を echo で明示 (S-6)** —
+  `CLAUDE_MEMORY_SYNC_REPO` が公式以外に設定されている場合は警告を表示
+- **[MEDIUM] cleanup.sh の awk 堅牢化** — 1 組目の end で停止せず、全ての
+  begin/end マーカー行を除去するロジックに変更。S-3 の構造破壊攻撃への
+  深層防御
+- **README.md セキュリティセクション大幅拡張** — trust model
+  (memory repo collaborator = Claude 操作権限)、組み込みの防御、
+  防げない脅威、バイパス方法を明示
+
 ## [0.1.0] — 2026-04-11
 
 初回 OSS 公開版。

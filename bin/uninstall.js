@@ -5,7 +5,7 @@
 //
 // ユーザーが独自に足した無関係な hook は一切触らない。
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, chmodSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
@@ -52,7 +52,15 @@ if (!existsSync(SETTINGS_PATH)) {
     }
   }
 
-  writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
+  // Atomic write (setup.js と同じパターン)
+  const tmpPath = `${SETTINGS_PATH}.tmp.${process.pid}`;
+  writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
+  try {
+    chmodSync(tmpPath, 0o600);
+  } catch {
+    // chmod 失敗は致命的ではない
+  }
+  renameSync(tmpPath, SETTINGS_PATH);
   console.log('ok hook を settings.json から削除しました');
 }
 

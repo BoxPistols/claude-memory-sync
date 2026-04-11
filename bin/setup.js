@@ -6,7 +6,7 @@
 // ので、ユーザーが別の memory-sync っぽい名前の hook を持っていても
 // 干渉しない。
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, chmodSync } from 'fs';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -67,9 +67,18 @@ function installHook(eventName, hookCommand) {
 installHook('UserPromptSubmit', `bash "${HOOK_START}"`);
 installHook('Stop', `bash "${HOOK_STOP}"`);
 
-// 書き込み
+// Atomic write: 一時ファイル → rename で差し替える
+// writeFileSync だけだと途中クラッシュで settings.json が truncate され、
+// Claude Code 起動不能になるリスクがある。
 mkdirSync(CLAUDE_DIR, { recursive: true });
-writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
+const tmpPath = `${SETTINGS_PATH}.tmp.${process.pid}`;
+writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
+try {
+  chmodSync(tmpPath, 0o600);  // 機密情報を含む可能性を考慮して 600 に
+} catch {
+  // chmod 失敗は致命的ではない
+}
+renameSync(tmpPath, SETTINGS_PATH);  // POSIX atomic rename
 
 console.log('ok hook を ~/.claude/settings.json に登録しました');
 console.log(`  UserPromptSubmit: ${HOOK_START}`);

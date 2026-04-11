@@ -5,12 +5,21 @@
 #
 # 環境変数:
 #   CLAUDE_MEMORY_DIR   記憶リポジトリのパス (デフォルト: ~/.claude-memory)
+#
+# セキュリティ上の注意:
+#   - memory ファイル内に注入マーカー (begin/end) が混入していても
+#     プロンプトインジェクション化しないよう、cat 時に grep -F で
+#     サニタイズする。
+#   - ログ出力は /tmp ではなく ~/.claude/logs/ に置く (symlink 攻撃
+#     および情報漏洩対策)。
 
 set -euo pipefail
 
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
 CLAUDE_DIR="$HOME/.claude"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+LOG_DIR="$CLAUDE_DIR/logs"
+LOG_FILE="$LOG_DIR/claude-memory-sync.log"
 INJECT_BEGIN="<!-- claude-memory-sync:begin -->"
 INJECT_END="<!-- claude-memory-sync:end -->"
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,15 +29,21 @@ if [ ! -d "$MEMORY_DIR" ]; then
   exit 0
 fi
 
-# 最新の記憶を取得 (リモートがある場合のみ) — 失敗はログに残して続行
+# ログディレクトリを確保 (700 で作成)
+mkdir -p "$LOG_DIR"
+chmod 700 "$LOG_DIR" 2>/dev/null || true
+
+# 最新の記憶を取得 (リモートがある場合のみ) — 失敗は自ユーザ領域のログに残して続行
 if [ -d "$MEMORY_DIR/.git" ]; then
   if git -C "$MEMORY_DIR" remote | grep -q .; then
-    if ! git -C "$MEMORY_DIR" pull --quiet --ff-only 2>/tmp/claude-memory-sync-pull.err; then
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] start.sh: pull --ff-only failed" \
-        >> /tmp/claude-memory-sync.log
-      cat /tmp/claude-memory-sync-pull.err >> /tmp/claude-memory-sync.log 2>/dev/null || true
-      rm -f /tmp/claude-memory-sync-pull.err
+    ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-pull.XXXXXX")
+    if ! git -C "$MEMORY_DIR" pull --quiet --ff-only 2>"$ERR_FILE"; then
+      {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] start.sh: pull --ff-only failed"
+        cat "$ERR_FILE" 2>/dev/null || true
+      } >> "$LOG_FILE"
     fi
+    rm -f "$ERR_FILE"
   fi
 fi
 
@@ -71,8 +86,20 @@ fi
 
 mkdir -p "$CLAUDE_DIR"
 
+# memory ファイルから注入マーカー行を除去する (プロンプトインジェクション対策)
+# begin/end マーカーがそのまま入ると次の session で awk フィルタを破壊し、
+# 攻撃コンテンツが CLAUDE.md に残留する可能性がある。
+sanitize_memory() {
+  local path="$1"
+  # 行全体が begin/end マーカーとちょうど一致する行を除去
+  grep -v -F -x \
+    -e "$INJECT_BEGIN" \
+    -e "$INJECT_END" \
+    "$path" 2>/dev/null || true
+}
+
 # 注入ブロックを生成
-TMPFILE=$(mktemp)
+TMPFILE=$(mktemp "${TMPDIR:-/tmp}/cms-inject.XXXXXX")
 {
   echo "$INJECT_BEGIN"
   echo "<!-- 自動生成 / 編集不要 / claude-memory-sync が管理 -->"
@@ -81,14 +108,14 @@ TMPFILE=$(mktemp)
   if [ -f "$GLOBAL" ]; then
     echo "## グローバル設計方針"
     echo ""
-    cat "$GLOBAL"
+    sanitize_memory "$GLOBAL"
     echo ""
   fi
 
   if [ -f "$PROJECT" ]; then
     echo "## プロジェクト固有の記憶 (${REPO})"
     echo ""
-    cat "$PROJECT"
+    sanitize_memory "$PROJECT"
     echo ""
   fi
 
@@ -97,15 +124,14 @@ TMPFILE=$(mktemp)
 
 # 既存の注入ブロックを削除 (begin/end マーカー間) してから挿入
 if [ -f "$CLAUDE_MD" ]; then
-  awk -v begin="$INJECT_BEGIN" -v end="$INJECT_END" '
-    $0 == begin { skipping = 1; next }
-    skipping && $0 == end { skipping = 0; next }
-    !skipping { print }
-  ' "$CLAUDE_MD" > "${CLAUDE_MD}.tmp"
-  mv "${CLAUDE_MD}.tmp" "$CLAUDE_MD"
+  # cleanup.sh を呼び出して堅牢に削除 (旧マーカー + 複数ブロック対応)
+  bash "$SKILL_DIR/hooks/cleanup.sh" >/dev/null 2>&1 || true
   # 末尾に必ず空行を 1 つ置いてから注入
   if [ -s "$CLAUDE_MD" ]; then
-    tail -c 1 "$CLAUDE_MD" | read -r _ || echo "" >> "$CLAUDE_MD"
+    # 最後の行が改行で終わっていなければ改行を追加
+    if [ "$(tail -c 1 "$CLAUDE_MD" 2>/dev/null | od -An -tx1 | tr -d ' ')" != "0a" ]; then
+      printf '\n' >> "$CLAUDE_MD"
+    fi
   fi
 fi
 

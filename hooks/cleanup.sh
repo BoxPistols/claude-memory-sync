@@ -2,6 +2,12 @@
 # claude-memory-sync: cleanup
 # ~/.claude/CLAUDE.md から claude-memory-sync の注入ブロックを削除する。
 # アンインストール時や手動クリーンアップ時に使用。
+#
+# 堅牢性の担保:
+#   - 複数の begin/end ペアが混ざっていても、全ての begin/end マーカー行を
+#     除去しつつ、その間の行も削除する。
+#   - 偽 begin / 偽 end による攻撃的な残留 (プロンプトインジェクション持ち込み)
+#     を防ぐため、1 ブロック目の end で停止せず、最後の end まで読む。
 
 set -euo pipefail
 
@@ -9,7 +15,7 @@ CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 INJECT_BEGIN="<!-- claude-memory-sync:begin -->"
 INJECT_END="<!-- claude-memory-sync:end -->"
 
-# 旧バージョン (v0.0.x) のマーカーも互換のため剥がす
+# 旧バージョン (v0.0.x) の単一マーカーも互換のため剥がす
 LEGACY_MARKER="<!-- claude-memory-sync: auto-generated -->"
 
 if [ ! -f "$CLAUDE_MD" ]; then
@@ -17,24 +23,36 @@ if [ ! -f "$CLAUDE_MD" ]; then
   exit 0
 fi
 
-# begin/end マーカー間を削除 (新方式) + 旧方式の legacy マーカー以降を削除
+TMP=$(mktemp "${TMPDIR:-/tmp}/cms-cleanup.XXXXXX")
+
+# Pass 1: 旧マーカー以降を全削除、新マーカーは全ての begin/end マーカー行と
+# その間のテキスト (最初の begin から最後の end まで) を削除する。
+#
+# 具体的なアルゴリズム:
+#   - 旧 legacy マーカーに出会ったら以降全行破棄
+#   - 最初に begin が出現したら inside=1
+#   - inside=1 の間は全行破棄
+#   - inside=1 中に begin が再出現しても無視 (そのまま inside 維持)
+#   - end が出現したら inside=0
+#   - inside=0 に戻った後、再び begin が出現したらまた inside=1
 awk -v begin="$INJECT_BEGIN" -v end="$INJECT_END" -v legacy="$LEGACY_MARKER" '
-  # Legacy: legacy マーカー以降の行を全て削除 (行末までしか残さない)
   legacy_found { next }
   $0 == legacy { legacy_found = 1; next }
-  # 新方式: begin/end ブロックを削除
-  $0 == begin { skipping = 1; next }
-  skipping && $0 == end { skipping = 0; next }
-  !skipping { print }
-' "$CLAUDE_MD" > "${CLAUDE_MD}.tmp"
-mv "${CLAUDE_MD}.tmp" "$CLAUDE_MD"
+  $0 == begin  { inside = 1; next }
+  inside && $0 == end { inside = 0; next }
+  inside { next }
+  { print }
+' "$CLAUDE_MD" > "$TMP"
 
-# 末尾に連続する空行を 1 つに圧縮 (削除で余計な空行が残ることがあるため)
+# 末尾に連続する空行を 1 つに圧縮 + 最終空行を 1 つに揃える
 awk '
   /^[[:space:]]*$/ { blank++; next }
   { while (blank-- > 0) print ""; blank = 0; print }
   END { if (blank > 0) print "" }
-' "$CLAUDE_MD" > "${CLAUDE_MD}.tmp"
-mv "${CLAUDE_MD}.tmp" "$CLAUDE_MD"
+' "$TMP" > "${TMP}.2"
+
+# atomic rename
+mv "${TMP}.2" "$CLAUDE_MD"
+rm -f "$TMP"
 
 echo "✓ 注入ブロックを削除しました"

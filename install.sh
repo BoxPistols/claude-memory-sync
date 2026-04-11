@@ -35,6 +35,11 @@ echo "  ok node: $(node --version)"
 # ── Skill をインストール ────────────────────────────────────────
 echo ""
 echo "▶ Skill をインストール中..."
+echo "  clone 元: $REPO_URL"
+if [ "$REPO_URL" != "https://github.com/BoxPistols/claude-memory-sync" ]; then
+  echo "  (CLAUDE_MEMORY_SYNC_REPO が公式以外に設定されています。"
+  echo "   fork や private mirror を使う正当な理由がある場合のみ続行してください)"
+fi
 
 mkdir -p "$(dirname "$SKILL_DIR")"
 

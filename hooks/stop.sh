@@ -14,6 +14,8 @@ set -euo pipefail
 
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOG_DIR="$HOME/.claude/logs"
+LOG_FILE="$LOG_DIR/claude-memory-sync.log"
 
 # 記憶リポジトリが存在しない、または Git 管理されていない場合はスキップ
 if [ ! -d "$MEMORY_DIR/.git" ]; then
@@ -26,6 +28,10 @@ cd "$MEMORY_DIR"
 if [ -z "$(git status --porcelain)" ]; then
   exit 0
 fi
+
+# ログディレクトリを確保
+mkdir -p "$LOG_DIR"
+chmod 700 "$LOG_DIR" 2>/dev/null || true
 
 # Secret scanner — 変更・新規ファイルに対して簡易パターンマッチ
 # 検出したら commit を中止 (手動介入必須)
@@ -48,7 +54,15 @@ case "$AUTO_PUSH" in
   1|true|TRUE|yes|YES)
     if git remote | grep -q .; then
       # ネットワーク障害やリモート競合で session 終了を止めないよう || true
-      git push --quiet 2>/dev/null || true
+      # エラー内容は自ユーザ領域のログに残す
+      ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-push.XXXXXX")
+      if ! git push --quiet 2>"$ERR_FILE"; then
+        {
+          echo "[$(date '+%Y-%m-%d %H:%M:%S')] stop.sh: auto push failed"
+          cat "$ERR_FILE" 2>/dev/null || true
+        } >> "$LOG_FILE"
+      fi
+      rm -f "$ERR_FILE"
     fi
     ;;
 esac
