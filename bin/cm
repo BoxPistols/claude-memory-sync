@@ -1,88 +1,212 @@
 #!/bin/bash
-# cm - claude-memory sync
-# 記憶リポジトリを手動で pull → commit → push する
+# cm - claude-memory sync CLI
+# 記憶リポジトリを手動で同期・検査するためのフロントエンド。
+#
+# サブコマンド:
+#   sync    (デフォルト)  pull --rebase → commit → push
+#   status                ファイル一覧 + ahead/behind + 最終 commit
+#   edit                  global.md を $EDITOR で開く
+#   clean                 ~/.claude/CLAUDE.md から注入ブロックを削除
+#   log                   最近の commit ログ (10 件)
+#
+# 環境変数:
+#   CLAUDE_MEMORY_DIR             記憶リポジトリのパス (デフォルト: ~/.claude-memory)
+#   CLAUDE_MEMORY_SKIP_SECRET_SCAN シークレットスキャンをバイパス
+#                                 (sync 時のみ)
 
 set -euo pipefail
 
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
 CMD="${1:-sync}"
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
-  echo "使い方: cm [コマンド]"
-  echo ""
-  echo "コマンド:"
-  echo "  sync    pull → commit → push（デフォルト）"
-  echo "  status  記憶の現在の状態を表示"
-  echo "  edit    global.md をエディタで開く"
-  echo "  clean   ~/.claude/CLAUDE.md の注入ブロックを削除"
-  echo ""
+  cat <<EOF
+使い方: cm [コマンド]
+
+コマンド:
+  sync    pull --rebase → commit → push (デフォルト)
+  status  記憶の現在の状態・ahead/behind・ファイル一覧を表示
+  log     最近の commit 履歴を表示
+  edit    global.md を \$EDITOR で開く
+  clean   ~/.claude/CLAUDE.md の注入ブロックを削除
+
+環境変数:
+  CLAUDE_MEMORY_DIR              記憶リポジトリのパス
+                                 (デフォルト: ~/.claude-memory)
+  CLAUDE_MEMORY_SKIP_SECRET_SCAN シークレットスキャンをバイパス
+EOF
 }
 
-if [ "$CMD" = "--help" ] || [ "$CMD" = "-h" ]; then
+if [ "$CMD" = "--help" ] || [ "$CMD" = "-h" ] || [ "$CMD" = "help" ]; then
   usage
   exit 0
 fi
 
 if [ ! -d "$MEMORY_DIR" ]; then
-  echo "❌ 記憶リポジトリが見つかりません: $MEMORY_DIR"
-  echo "   install.sh を実行してセットアップしてください"
+  echo "❌ 記憶リポジトリが見つかりません: $MEMORY_DIR" >&2
+  echo "   install.sh を実行してセットアップしてください" >&2
   exit 1
 fi
 
+# ── 共通 helper ──────────────────────────────────────────────
+
+has_remote() {
+  git -C "$MEMORY_DIR" remote | grep -q .
+}
+
+# 上流ブランチに対する ahead/behind を表示
+show_tracking_state() {
+  if ! has_remote; then
+    echo "  (リモート未設定)"
+    return
+  fi
+
+  if ! git -C "$MEMORY_DIR" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    echo "  (上流ブランチ未設定 — git push -u origin HEAD で設定)"
+    return
+  fi
+
+  local counts
+  counts=$(git -C "$MEMORY_DIR" rev-list --left-right --count '@{u}...HEAD' 2>/dev/null || echo "0	0")
+  local behind ahead
+  behind=$(echo "$counts" | awk '{print $1}')
+  ahead=$(echo "$counts" | awk '{print $2}')
+
+  if [ "$ahead" = "0" ] && [ "$behind" = "0" ]; then
+    echo "  リモートと同期済み"
+  else
+    echo "  ローカルが ${ahead} コミット先行、${behind} コミット遅れ"
+  fi
+}
+
+# ── サブコマンド ─────────────────────────────────────────────
+
 case "$CMD" in
+
   sync)
     cd "$MEMORY_DIR"
 
-    # pull（リモートがある場合のみ）
-    if git remote | grep -q .; then
-      git pull --quiet --ff-only 2>/dev/null || true
+    if has_remote; then
+      # rebase で取り込み (fast-forward 不可能な場合でも極力進める)
+      echo "▶ git pull --rebase..."
+      if ! git pull --rebase --quiet 2>/tmp/cm-pull.err; then
+        echo "" >&2
+        echo "❌ pull --rebase 失敗" >&2
+        echo "" >&2
+        cat /tmp/cm-pull.err >&2 || true
+        echo "" >&2
+        echo "  手動で競合を解決してから再度 cm sync を実行してください" >&2
+        rm -f /tmp/cm-pull.err
+        exit 1
+      fi
+      rm -f /tmp/cm-pull.err
     fi
 
     if [ -z "$(git status --porcelain)" ]; then
-      echo "✓ 変更なし（最新の状態です）"
+      echo "✓ 変更なし (最新の状態です)"
+      show_tracking_state
       exit 0
     fi
 
-    TIMESTAMP=$(date '+%m/%d %H:%M')
-    git add .
-    git status --short
-    git commit -m "manual: ${TIMESTAMP}" --quiet
+    # シークレットスキャナを走らせる
+    if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
+      if ! "$SKILL_DIR/hooks/scan-secrets.sh"; then
+        exit 1
+      fi
+    fi
 
-    if git remote | grep -q .; then
-      git push --quiet
-      echo "✓ 同期しました（push 完了）"
+    TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
+    git add .
+    echo ""
+    echo "▶ 変更ファイル:"
+    git status --short
+    echo ""
+    git commit -m "manual: ${TIMESTAMP}" --quiet
+    echo "✓ commit 完了"
+
+    if has_remote; then
+      echo "▶ git push..."
+      if git push --quiet 2>/tmp/cm-push.err; then
+        echo "✓ push 完了"
+      else
+        echo "" >&2
+        echo "❌ push 失敗" >&2
+        cat /tmp/cm-push.err >&2 || true
+        echo "" >&2
+        echo "  ネットワーク / 認証 / 上流分岐を確認してください" >&2
+        rm -f /tmp/cm-push.err
+        exit 1
+      fi
+      rm -f /tmp/cm-push.err
     else
-      echo "✓ コミットしました（リモートなし）"
+      echo "✓ (リモート未設定のため push はスキップ)"
     fi
     ;;
 
   status)
     echo "📁 記憶リポジトリ: $MEMORY_DIR"
     echo ""
+
     echo "── ファイル一覧 ──"
-    find "$MEMORY_DIR" -name "*.md" ! -path "*/.git/*" | sort | while read -r f; do
-      SIZE=$(wc -l < "$f")
-      echo "  ${f#$MEMORY_DIR/}  (${SIZE}行)"
-    done
+    if [ -d "$MEMORY_DIR" ]; then
+      find "$MEMORY_DIR" -name "*.md" -not -path "*/.git/*" -type f | sort | while read -r f; do
+        local_size=$(wc -l < "$f" | tr -d ' ')
+        printf "  %-60s %s 行\n" "${f#$MEMORY_DIR/}" "$local_size"
+      done
+    fi
     echo ""
-    echo "── Git 状態 ──"
-    git -C "$MEMORY_DIR" status --short
+
+    echo "── リモートとの状態 ──"
+    show_tracking_state
+    echo ""
+
+    echo "── 未 commit の変更 ──"
+    porcelain=$(git -C "$MEMORY_DIR" status --short)
+    if [ -z "$porcelain" ]; then
+      echo "  (なし)"
+    else
+      echo "$porcelain" | sed 's/^/  /'
+    fi
+    echo ""
+
+    echo "── 最終 commit ──"
+    if git -C "$MEMORY_DIR" log -1 --oneline 2>/dev/null; then
+      :
+    else
+      echo "  (まだ commit がありません)"
+    fi
+    ;;
+
+  log)
+    echo "📝 最近の commit 履歴 ($MEMORY_DIR):"
+    echo ""
+    git -C "$MEMORY_DIR" log --oneline -10 2>/dev/null || echo "  (まだ commit がありません)"
     ;;
 
   edit)
-    EDITOR="${EDITOR:-nano}"
-    "$EDITOR" "$MEMORY_DIR/global.md"
+    EDITOR_BIN="${EDITOR:-nano}"
+    if [ ! -f "$MEMORY_DIR/global.md" ]; then
+      echo "▶ global.md を新規作成します"
+      mkdir -p "$MEMORY_DIR"
+      cat > "$MEMORY_DIR/global.md" <<'TEMPLATE'
+# グローバル設計方針
+
+## Claude への指示スタイル
+- ここに自分の好みを書く
+TEMPLATE
+    fi
+    "$EDITOR_BIN" "$MEMORY_DIR/global.md"
     ;;
 
   clean)
-    SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
     bash "$SKILL_DIR/hooks/cleanup.sh"
     ;;
 
   *)
-    echo "❌ 不明なコマンド: $CMD"
-    echo ""
-    usage
+    echo "❌ 不明なコマンド: $CMD" >&2
+    echo "" >&2
+    usage >&2
     exit 1
     ;;
 esac
