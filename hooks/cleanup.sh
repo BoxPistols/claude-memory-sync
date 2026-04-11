@@ -24,6 +24,9 @@ if [ ! -f "$CLAUDE_MD" ]; then
 fi
 
 TMP=$(mktemp "${TMPDIR:-/tmp}/cms-cleanup.XXXXXX")
+TMP2=$(mktemp "${TMPDIR:-/tmp}/cms-cleanup2.XXXXXX")
+# EXIT trap で両ファイルを確実に削除 (途中終了・シグナル受信を含む)
+trap 'rm -f "$TMP" "$TMP2"' EXIT
 
 # Pass 1: 旧マーカー以降を全削除、新マーカーは全ての begin/end マーカー行と
 # その間のテキスト (最初の begin から最後の end まで) を削除する。
@@ -49,10 +52,9 @@ awk '
   /^[[:space:]]*$/ { blank++; next }
   { while (blank-- > 0) print ""; blank = 0; print }
   END { if (blank > 0) print "" }
-' "$TMP" > "${TMP}.2"
+' "$TMP" > "$TMP2"
 
 # atomic rename
-mv "${TMP}.2" "$CLAUDE_MD"
-rm -f "$TMP"
+mv "$TMP2" "$CLAUDE_MD"
 
 echo "✓ 注入ブロックを削除しました"

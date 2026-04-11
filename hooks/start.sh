@@ -7,11 +7,13 @@
 #   CLAUDE_MEMORY_DIR   記憶リポジトリのパス (デフォルト: ~/.claude-memory)
 #
 # セキュリティ上の注意:
-#   - memory ファイル内に注入マーカー (begin/end) が混入していても
-#     プロンプトインジェクション化しないよう、cat 時に grep -F で
-#     サニタイズする。
-#   - ログ出力は /tmp ではなく ~/.claude/logs/ に置く (symlink 攻撃
-#     および情報漏洩対策)。
+#   - CLAUDE_MEMORY_DIR は $HOME 以下であることを強制 (パス操作防止)。
+#   - project_key() の REPO から .. を除去 (パストラバーサル防止)。
+#   - sanitize_memory() でマーカーを「含む」行を全除去 (プロンプトインジェクション防止)。
+#   - TMPFILE / FINAL_TMP は EXIT trap で確実にクリーンアップ。
+#   - CLAUDE.md の更新は cleanup → 合成 → mv でアトミックに行う。
+#   - ログ出力は /tmp ではなく ~/.claude/logs/ に置く (symlink 攻撃・情報漏洩対策)。
+#   - ログは 1MB 超で自動ローテーション。
 
 set -euo pipefail
 
@@ -24,6 +26,16 @@ INJECT_BEGIN="<!-- claude-memory-sync:begin -->"
 INJECT_END="<!-- claude-memory-sync:end -->"
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# MEMORY_DIR が HOME 以下にあることを確認 (任意パス操作の防止)
+case "$MEMORY_DIR" in
+  "$HOME/"*|"$HOME")
+    ;;
+  *)
+    echo "[claude-memory-sync] CLAUDE_MEMORY_DIR は \$HOME 以下に設定してください: $MEMORY_DIR" >&2
+    exit 1
+    ;;
+esac
+
 # 記憶リポジトリが存在しない場合はスキップ
 if [ ! -d "$MEMORY_DIR" ]; then
   exit 0
@@ -32,6 +44,19 @@ fi
 # ログディレクトリを確保 (700 で作成)
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" 2>/dev/null || true
+
+# ログローテーション: 1MB 超えで古いログを退避
+rotate_log() {
+  local max_bytes=1048576
+  if [ -f "$LOG_FILE" ]; then
+    local size
+    size=$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$size" -gt "$max_bytes" ]; then
+      mv "$LOG_FILE" "${LOG_FILE}.old"
+    fi
+  fi
+}
+rotate_log
 
 # 最新の記憶を取得 (リモートがある場合のみ) — 失敗は自ユーザ領域のログに残して続行
 if [ -d "$MEMORY_DIR/.git" ]; then
@@ -70,8 +95,12 @@ project_key() {
 
 REPO=$(project_key)
 
-# 空白 / スラッシュ / 危険文字を除去しておく (念のため)
+# 空白 / スラッシュ / 危険文字を除去
 REPO=$(printf '%s' "$REPO" | tr -c 'A-Za-z0-9._-' '-')
+# パストラバーサル対策: 2文字以上の連続ドットを - に置換し、先頭のドットも除去
+REPO=$(printf '%s' "$REPO" | sed 's/\.\.\+/-/g; s/^\.//')
+# サニタイズ後に空になった場合のフォールバック
+[ -z "$REPO" ] && REPO="unknown"
 
 GLOBAL="$MEMORY_DIR/global.md"
 PROJECT="$MEMORY_DIR/repos/${REPO}.md"
@@ -87,19 +116,23 @@ fi
 mkdir -p "$CLAUDE_DIR"
 
 # memory ファイルから注入マーカー行を除去する (プロンプトインジェクション対策)
-# begin/end マーカーがそのまま入ると次の session で awk フィルタを破壊し、
+# begin/end マーカーが混入すると次の session で awk フィルタを破壊し、
 # 攻撃コンテンツが CLAUDE.md に残留する可能性がある。
+# -x (行全体一致) を外してマーカー文字列を「含む」行を全除去することで、
+# 前後スペースや埋め込みケースも防ぐ。
 sanitize_memory() {
   local path="$1"
-  # 行全体が begin/end マーカーとちょうど一致する行を除去
-  grep -v -F -x \
+  grep -v -F \
     -e "$INJECT_BEGIN" \
     -e "$INJECT_END" \
     "$path" 2>/dev/null || true
 }
 
-# 注入ブロックを生成
+# 注入ブロック生成用と CLAUDE.md 合成用の tmpfile を先に両方作成し、
+# EXIT trap を一度だけ設定する (2回定義すると後者が前者を上書きするため)
 TMPFILE=$(mktemp "${TMPDIR:-/tmp}/cms-inject.XXXXXX")
+FINAL_TMP=$(mktemp "${TMPDIR:-/tmp}/cms-claude-md.XXXXXX")
+trap 'rm -f "$TMPFILE" "$FINAL_TMP"' EXIT
 {
   echo "$INJECT_BEGIN"
   echo "<!-- 自動生成 / 編集不要 / claude-memory-sync が管理 -->"
@@ -122,18 +155,18 @@ TMPFILE=$(mktemp "${TMPDIR:-/tmp}/cms-inject.XXXXXX")
   echo "$INJECT_END"
 } > "$TMPFILE"
 
-# 既存の注入ブロックを削除 (begin/end マーカー間) してから挿入
+# 既存の注入ブロックを削除してから新ブロックをアトミックに書き込む
+# cleanup → tmpfile 合成 → mv の順で、クラッシュ時に中途半端な状態を残さない
 if [ -f "$CLAUDE_MD" ]; then
-  # cleanup.sh を呼び出して堅牢に削除 (旧マーカー + 複数ブロック対応)
   bash "$SKILL_DIR/hooks/cleanup.sh" >/dev/null 2>&1 || true
-  # 末尾に必ず空行を 1 つ置いてから注入
   if [ -s "$CLAUDE_MD" ]; then
-    # 最後の行が改行で終わっていなければ改行を追加
     if [ "$(tail -c 1 "$CLAUDE_MD" 2>/dev/null | od -An -tx1 | tr -d ' ')" != "0a" ]; then
       printf '\n' >> "$CLAUDE_MD"
     fi
   fi
+  cat "$CLAUDE_MD" "$TMPFILE" > "$FINAL_TMP"
+else
+  cat "$TMPFILE" > "$FINAL_TMP"
 fi
 
-cat "$TMPFILE" >> "$CLAUDE_MD"
-rm -f "$TMPFILE"
+mv "$FINAL_TMP" "$CLAUDE_MD"

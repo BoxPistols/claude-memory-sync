@@ -54,13 +54,19 @@ gather_diff_history() {
   fi
 }
 
+# シェル変数を経由せず tmpfile に書き出す
+# 理由: $(command) はヌルバイトで切り詰められるため、null byte を含む
+# シークレットがスキャンを回避できる。tmpfile ならバイナリセーフ。
+DIFF_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-scan.XXXXXX")
+trap 'rm -f "$DIFF_FILE"' EXIT
+
 case "$MODE" in
   working)
-    DIFF=$(gather_diff_working)
+    gather_diff_working > "$DIFF_FILE"
     SCAN_TARGET="pending changes"
     ;;
   history)
-    DIFF=$(gather_diff_history)
+    gather_diff_history > "$DIFF_FILE"
     SCAN_TARGET="unpushed commits"
     ;;
   *)
@@ -69,7 +75,7 @@ case "$MODE" in
     ;;
 esac
 
-if [ -z "$DIFF" ]; then
+if [ ! -s "$DIFF_FILE" ]; then
   exit 0
 fi
 
@@ -78,7 +84,9 @@ fi
 # 追加時は best-effort かつ false positive が少ないパターンだけを選ぶ。
 # プレフィックス + 十分な長さの base62 文字列、という形が理想。
 PATTERNS=(
-  # OpenAI / Anthropic
+  # Anthropic API key (sk-ant- プレフィックス形式)
+  'sk-ant-[A-Za-z0-9_-]{30,}'
+  # OpenAI / 汎用 sk- プレフィックス
   'sk-[A-Za-z0-9_-]{20,}'
   'sk_live_[0-9A-Za-z]{20,}'         # Stripe 秘密鍵
   'rk_live_[0-9A-Za-z]{20,}'         # Stripe restricted key
@@ -126,7 +134,8 @@ PATTERNS=(
 FOUND=0
 for pat in "${PATTERNS[@]}"; do
   # -e で明示的にパターンとして渡す (-----BEGIN ... がオプション扱いされるのを防ぐ)
-  if printf '%s' "$DIFF" | grep -E -q -e "$pat"; then
+  # tmpfile から直接 grep することでヌルバイトによる回避を防ぐ
+  if grep -E -q -e "$pat" "$DIFF_FILE"; then
     if [ "$FOUND" -eq 0 ]; then
       echo "" >&2
       echo "⚠️  claude-memory-sync: potential secret detected in ${SCAN_TARGET}" >&2

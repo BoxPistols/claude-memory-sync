@@ -122,7 +122,8 @@ case "$CMD" in
     fi
 
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
-    git add .
+    # .md ファイルのみをステージング (意図しないファイルの commit を防ぐ)
+    git add -- ':(glob)**.md'
     echo ""
     echo "▶ 変更ファイル:"
     git status --short
@@ -167,7 +168,8 @@ case "$CMD" in
 
     echo "── ファイル一覧 ──"
     if [ -d "$MEMORY_DIR" ]; then
-      find "$MEMORY_DIR" -name "*.md" -not -path "*/.git/*" -type f | sort | while read -r f; do
+      # -maxdepth 3: 深い走査を防ぐ / -xdev: 別ファイルシステムへの脱出を防ぐ
+      find "$MEMORY_DIR" -maxdepth 3 -xdev -name "*.md" -not -path "*/.git/*" -type f | sort | while read -r f; do
         local_size=$(wc -l < "$f" | tr -d ' ')
         printf "  %-60s %s 行\n" "${f#"$MEMORY_DIR"/}" "$local_size"
       done
@@ -205,6 +207,18 @@ case "$CMD" in
 
   edit)
     EDITOR_BIN="${EDITOR:-nano}"
+    # コマンドインジェクション対策: スペース・シェルメタ文字を含む EDITOR は拒否
+    case "$EDITOR_BIN" in
+      *[[:space:]]*|*[\;\&\|\`\$\(\)\<\>\'\"\\]*)
+        echo "❌ EDITOR に危険な文字が含まれています: $EDITOR_BIN" >&2
+        echo "   EDITOR 環境変数に単純なコマンド名またはパスを設定してください" >&2
+        exit 1
+        ;;
+    esac
+    if ! command -v "$EDITOR_BIN" >/dev/null 2>&1; then
+      echo "❌ エディタが見つかりません: $EDITOR_BIN" >&2
+      exit 1
+    fi
     if [ ! -f "$MEMORY_DIR/global.md" ]; then
       echo "▶ global.md を新規作成します"
       mkdir -p "$MEMORY_DIR"

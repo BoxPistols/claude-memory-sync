@@ -1,0 +1,14 @@
+# claude-memory-sync: 記憶リポジトリ用 .gitignore
+#
+# .md ファイルのみを Git で追跡し、意図しないファイル
+# (APIキー・設定ファイル・バイナリ等) が誤って commit されるのを防ぐ。
+# stop.sh / cm sync の「git add -- ':(glob)**.md'」と二重の防御になる。
+
+# まずすべてを除外
+*
+
+# .md ファイルと必要なディレクトリ構造のみ許可
+!*.md
+!repos/
+!repos/*.md
+!.gitignore

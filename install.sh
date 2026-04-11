@@ -4,9 +4,10 @@
 
 set -euo pipefail
 
+OFFICIAL_REPO_URL="https://github.com/BoxPistols/claude-memory-sync"
 SKILL_DIR="${HOME}/.claude/skills/memory-sync"
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
-REPO_URL="${CLAUDE_MEMORY_SYNC_REPO:-https://github.com/BoxPistols/claude-memory-sync}"
+REPO_URL="${CLAUDE_MEMORY_SYNC_REPO:-$OFFICIAL_REPO_URL}"
 
 echo ""
 echo "claude-memory-sync セットアップ"
@@ -36,9 +37,36 @@ echo "  ok node: $(node --version)"
 echo ""
 echo "▶ Skill をインストール中..."
 echo "  clone 元: $REPO_URL"
-if [ "$REPO_URL" != "https://github.com/BoxPistols/claude-memory-sync" ]; then
-  echo "  (CLAUDE_MEMORY_SYNC_REPO が公式以外に設定されています。"
-  echo "   fork や private mirror を使う正当な理由がある場合のみ続行してください)"
+
+# REPO_URL スキーム検証 (ext:: / file:// 等によるコマンド実行を防ぐ)
+case "$REPO_URL" in
+  https://*|git@*) ;;
+  *)
+    echo "  [error] CLAUDE_MEMORY_SYNC_REPO に対応していない URL スキームが設定されています" >&2
+    echo "          https:// または git@ で始まる URL のみ使用できます" >&2
+    exit 1
+    ;;
+esac
+
+# 公式以外のリポジトリはデフォルトで拒否する
+# Claude Code の hook として毎セッション自動実行されるため、
+# 任意リポジトリのコードを無審査でインストールするリスクを防ぐ。
+# 正当な理由がある場合 (fork / private mirror) は CLAUDE_MEMORY_ALLOW_CUSTOM_REPO=1 を設定。
+if [ "$REPO_URL" != "$OFFICIAL_REPO_URL" ]; then
+  case "${CLAUDE_MEMORY_ALLOW_CUSTOM_REPO:-}" in
+    1|true|TRUE|yes|YES) ;;
+    *)
+      echo "" >&2
+      echo "  [error] 公式以外のリポジトリからのインストールはデフォルトで無効です。" >&2
+      echo "          REPO_URL: $REPO_URL" >&2
+      echo "" >&2
+      echo "          自分の fork や private mirror を使う場合は:" >&2
+      echo "          CLAUDE_MEMORY_ALLOW_CUSTOM_REPO=1 bash install.sh" >&2
+      echo "" >&2
+      exit 1
+      ;;
+  esac
+  echo "  (警告: 公式以外のリポジトリを使用しています — 内容を事前に確認してください)"
 fi
 
 mkdir -p "$(dirname "$SKILL_DIR")"
@@ -131,6 +159,15 @@ else
   fi
 
   if [ -n "$MEMORY_REPO_URL" ]; then
+    # URL スキーム検証: https:// または git@ のみ許可 (ext:: / file:// 等を拒否)
+    case "$MEMORY_REPO_URL" in
+      https://*|git@*)
+        ;;
+      *)
+        echo "  [error] 対応していない URL スキームです。https:// または git@ で始まる URL を入力してください" >&2
+        exit 1
+        ;;
+    esac
     git clone --quiet "$MEMORY_REPO_URL" "$MEMORY_DIR"
     echo "  ok 記憶リポジトリをクローンしました"
   else
@@ -143,6 +180,12 @@ else
   if [ ! -f "$MEMORY_DIR/global.md" ]; then
     cp "$SKILL_DIR/template/global.md" "$MEMORY_DIR/global.md"
     echo "  ok global.md を初期化しました (cm edit で編集してください)"
+  fi
+
+  # .gitignore を配置: .md 以外のファイルが誤って commit されるのを防ぐ
+  if [ ! -f "$MEMORY_DIR/.gitignore" ]; then
+    cp "$SKILL_DIR/template/.gitignore" "$MEMORY_DIR/.gitignore"
+    echo "  ok .gitignore を設置しました (.md のみ追跡)"
   fi
 
   mkdir -p "$MEMORY_DIR/repos"

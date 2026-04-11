@@ -17,6 +17,16 @@ SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$HOME/.claude/logs"
 LOG_FILE="$LOG_DIR/claude-memory-sync.log"
 
+# MEMORY_DIR が HOME 以下にあることを確認 (任意パス操作の防止)
+case "$MEMORY_DIR" in
+  "$HOME/"*|"$HOME")
+    ;;
+  *)
+    echo "[claude-memory-sync] CLAUDE_MEMORY_DIR は \$HOME 以下に設定してください: $MEMORY_DIR" >&2
+    exit 1
+    ;;
+esac
+
 # 記憶リポジトリが存在しない、または Git 管理されていない場合はスキップ
 if [ ! -d "$MEMORY_DIR/.git" ]; then
   exit 0
@@ -33,19 +43,40 @@ fi
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR" 2>/dev/null || true
 
+# ログローテーション: 1MB 超えで古いログを退避 (スキャン前に実行して書き込み領域を確保)
+rotate_log() {
+  local max_bytes=1048576
+  if [ -f "$LOG_FILE" ]; then
+    local size
+    size=$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$size" -gt "$max_bytes" ]; then
+      mv "$LOG_FILE" "${LOG_FILE}.old"
+    fi
+  fi
+}
+rotate_log
+
 # Secret scanner — 変更・新規ファイルに対して簡易パターンマッチ
 # 検出したら commit を中止 (手動介入必須)
 if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
   if ! "$SKILL_DIR/hooks/scan-secrets.sh"; then
-    # scan-secrets.sh が非ゼロを返したら commit せず終了
-    exit 0
+    # シークレット検出は異常事態 — ログに記録して非ゼロで終了
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] stop.sh: commit aborted — potential secret detected" >> "$LOG_FILE"
+    exit 1
   fi
 fi
 
 REPO=$(basename "$(pwd)")
 TIMESTAMP=$(date '+%m/%d %H:%M')
 
-git add .
+# .md ファイルのみをステージング (意図しないファイルの commit を防ぐ)
+git add -- ':(glob)**.md'
+
+# .md 以外の変更のみの場合はステージング対象がなく commit 不要
+if [ -z "$(git diff --cached --name-only)" ]; then
+  exit 0
+fi
+
 git commit -m "auto: ${REPO} ${TIMESTAMP}" --quiet
 
 # 自動 push はデフォルト off — 明示的に opt-in された場合のみ実行
