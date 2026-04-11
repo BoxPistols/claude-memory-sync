@@ -152,7 +152,7 @@ case "$CMD" in
     if [ -d "$MEMORY_DIR" ]; then
       find "$MEMORY_DIR" -name "*.md" -not -path "*/.git/*" -type f | sort | while read -r f; do
         local_size=$(wc -l < "$f" | tr -d ' ')
-        printf "  %-60s %s 行\n" "${f#$MEMORY_DIR/}" "$local_size"
+        printf "  %-60s %s 行\n" "${f#"$MEMORY_DIR"/}" "$local_size"
       done
     fi
     echo ""
@@ -166,6 +166,8 @@ case "$CMD" in
     if [ -z "$porcelain" ]; then
       echo "  (なし)"
     else
+      # shellcheck disable=SC2001
+      # sed を使わず parameter expansion でも書けるが、可読性のため sed を使う
       echo "$porcelain" | sed 's/^/  /'
     fi
     echo ""

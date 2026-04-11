@@ -6,10 +6,10 @@ set -euo pipefail
 
 SKILL_DIR="${HOME}/.claude/skills/memory-sync"
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
-REPO_URL="https://github.com/BoxPistols/claude-memory-sync"  # ← 公開後に自分のURLに変更
+REPO_URL="${CLAUDE_MEMORY_SYNC_REPO:-https://github.com/BoxPistols/claude-memory-sync}"
 
 echo ""
-echo "🧠 claude-memory-sync セットアップ"
+echo "claude-memory-sync セットアップ"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # ── 依存チェック ────────────────────────────────────────────────
@@ -18,19 +18,19 @@ echo "▶ 依存関係を確認中..."
 
 for cmd in git node; do
   if ! command -v "$cmd" &>/dev/null; then
-    echo "  ❌ $cmd が見つかりません。インストールしてください"
+    echo "  [error] $cmd が見つかりません。インストールしてください" >&2
     exit 1
   fi
 done
 
 NODE_VERSION=$(node --version | sed 's/v//' | cut -d. -f1)
 if [ "$NODE_VERSION" -lt 18 ]; then
-  echo "  ❌ Node.js v18 以上が必要です（現在: $(node --version)）"
+  echo "  [error] Node.js v18 以上が必要です (現在: $(node --version))" >&2
   exit 1
 fi
 
-echo "  ✓ git: $(git --version | awk '{print $3}')"
-echo "  ✓ node: $(node --version)"
+echo "  ok git: $(git --version | awk '{print $3}')"
+echo "  ok node: $(node --version)"
 
 # ── Skill をインストール ────────────────────────────────────────
 echo ""
@@ -48,6 +48,7 @@ fi
 chmod +x "$SKILL_DIR/hooks/start.sh"
 chmod +x "$SKILL_DIR/hooks/stop.sh"
 chmod +x "$SKILL_DIR/hooks/cleanup.sh"
+chmod +x "$SKILL_DIR/hooks/scan-secrets.sh"
 chmod +x "$SKILL_DIR/bin/cm"
 
 # cm を PATH に追加
@@ -58,11 +59,47 @@ ln -sf "$SKILL_DIR/bin/cm" "$LOCAL_BIN/cm"
 # PATH に ~/.local/bin が含まれているか確認
 if ! echo "$PATH" | grep -q "$LOCAL_BIN"; then
   echo ""
-  echo "  ⚠️  ~/.local/bin を PATH に追加してください："
-  echo "     echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
+  echo "  ~/.local/bin が PATH に含まれていません。"
+
+  # 該当するシェル RC ファイルを推測
+  SHELL_NAME=$(basename "${SHELL:-/bin/bash}")
+  case "$SHELL_NAME" in
+    zsh)  SHELL_RC="$HOME/.zshrc" ;;
+    bash) SHELL_RC="$HOME/.bashrc" ;;
+    *)    SHELL_RC="" ;;
+  esac
+
+  # shellcheck disable=SC2016
+  # 単一引用符は意図的 — シェル RC ファイルに literal の $HOME/$PATH を書き込みたい
+  PATH_EXPORT='export PATH="$HOME/.local/bin:$PATH"'
+
+  if [ -n "$SHELL_RC" ] && [ -t 0 ]; then
+    # 対話的 install の場合のみ自動追記を提示
+    printf "  %s に自動的に追記しますか? [y/N]: " "$SHELL_RC"
+    read -r ANSWER < /dev/tty || ANSWER="n"
+    if [ "$ANSWER" = "y" ] || [ "$ANSWER" = "Y" ]; then
+      if ! grep -Fq "$PATH_EXPORT" "$SHELL_RC" 2>/dev/null; then
+        {
+          echo ""
+          echo "# claude-memory-sync: cm コマンドへの PATH"
+          echo "$PATH_EXPORT"
+        } >> "$SHELL_RC"
+        echo "  追記しました。新しいシェルで有効になります。"
+      else
+        echo "  既に追記済みです。"
+      fi
+    else
+      echo "  スキップしました。手動で追加するには:"
+      echo "    echo '$PATH_EXPORT' >> $SHELL_RC"
+    fi
+  else
+    echo "  次のコマンドで手動追加してください:"
+    [ -n "$SHELL_RC" ] && echo "    echo '$PATH_EXPORT' >> $SHELL_RC" \
+                      || echo "    echo '$PATH_EXPORT' >> ~/.zshrc   # zsh の場合"
+  fi
 fi
 
-echo "  ✓ Skill をインストールしました: $SKILL_DIR"
+echo "  ok Skill をインストールしました: $SKILL_DIR"
 
 # ── 記憶リポジトリのセットアップ ───────────────────────────────
 echo ""
@@ -72,13 +109,13 @@ if [ -d "$MEMORY_DIR/.git" ]; then
   echo "  既存の記憶リポジトリを使用します: $MEMORY_DIR"
   if git -C "$MEMORY_DIR" remote | grep -q .; then
     git -C "$MEMORY_DIR" pull --quiet --ff-only 2>/dev/null || true
-    echo "  ✓ 最新の記憶を取得しました"
+    echo "  ok 最新の記憶を取得しました"
   fi
 else
   echo ""
-  echo "  GitHubにプライベートリポジトリを作成してURLを入力してください"
+  echo "  GitHub にプライベートリポジトリを作成して URL を入力してください"
   echo "  例: git@github.com:YOUR-USERNAME/claude-memory-private.git"
-  echo "  （空 Enter でローカルのみ / Git同期なし）"
+  echo "  (空 Enter でローカルのみ / Git 同期なし)"
   echo ""
 
   # curl | bash 経由の場合は /dev/tty から読む
@@ -90,17 +127,17 @@ else
 
   if [ -n "$MEMORY_REPO_URL" ]; then
     git clone --quiet "$MEMORY_REPO_URL" "$MEMORY_DIR"
-    echo "  ✓ 記憶リポジトリをクローンしました"
+    echo "  ok 記憶リポジトリをクローンしました"
   else
     mkdir -p "$MEMORY_DIR/repos"
-    git -C "$MEMORY_DIR" init --quiet
-    echo "  ✓ ローカル記憶リポジトリを作成しました"
+    git -C "$MEMORY_DIR" init --quiet -b main
+    echo "  ok ローカル記憶リポジトリを作成しました (リモートなし)"
   fi
 
-  # global.md のテンプレートを配置（なければ）
+  # global.md のテンプレートを配置 (なければ)
   if [ ! -f "$MEMORY_DIR/global.md" ]; then
     cp "$SKILL_DIR/template/global.md" "$MEMORY_DIR/global.md"
-    echo "  ✓ global.md を初期化しました（編集してください）"
+    echo "  ok global.md を初期化しました (cm edit で編集してください)"
   fi
 
   mkdir -p "$MEMORY_DIR/repos"
@@ -111,43 +148,29 @@ echo ""
 echo "▶ Claude Code hook を登録中..."
 node "$SKILL_DIR/bin/setup.js"
 
-# ── グローバル .gitignore の確認 ───────────────────────────────
-echo ""
-echo "▶ グローバル .gitignore を確認中..."
-
-GLOBAL_GITIGNORE=$(git config --global core.excludesfile 2>/dev/null || echo "")
-
-if [ -z "$GLOBAL_GITIGNORE" ]; then
-  GLOBAL_GITIGNORE="$HOME/.gitignore_global"
-  git config --global core.excludesfile "$GLOBAL_GITIGNORE"
-fi
-
-# .letta/ が含まれていなければ追加（念のため）
-touch "$GLOBAL_GITIGNORE"
-if ! grep -q "^\.letta/$" "$GLOBAL_GITIGNORE" 2>/dev/null; then
-  echo ".letta/" >> "$GLOBAL_GITIGNORE"
-  echo "  ✓ .letta/ をグローバル .gitignore に追加しました"
-else
-  echo "  ✓ グローバル .gitignore は設定済みです"
-fi
-
 # ── 完了 ───────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✅ セットアップ完了"
+echo "セットアップ完了"
 echo ""
 echo "使い方:"
 echo "  claude            次回起動から記憶が自動注入されます"
-echo "  cm                記憶を手動でGit同期"
-echo "  cm status         記憶の状態を確認"
-echo "  cm edit           global.md をエディタで編集"
+echo "  cm                記憶を手動で Git 同期 (pull --rebase + commit + push)"
+echo "  cm status         記憶ファイル一覧 + ahead/behind を表示"
+echo "  cm log            最近の commit 履歴を表示"
+echo "  cm edit           global.md を \$EDITOR で開く"
 echo "  cm clean          ~/.claude/CLAUDE.md の注入ブロックを削除"
 echo ""
 echo "記憶ファイル:"
-echo "  $MEMORY_DIR/global.md        全PJ共通の設計方針"
-echo "  $MEMORY_DIR/repos/*.md       PJごとの記憶"
+echo "  $MEMORY_DIR/global.md        全 PJ 共通の設計方針 (手動編集)"
+echo "  $MEMORY_DIR/repos/*.md       PJ ごとの記憶 (自動追記)"
 echo ""
-echo "  Claudeに「今日の知見を記憶して」と言えば自動更新されます"
+echo "  Claude に「今日の知見を記憶して」と言えば自動更新されます"
+echo ""
+echo "環境変数 (optional):"
+echo "  CLAUDE_MEMORY_AUTO_PUSH=1       session 終了時の自動 push を有効化"
+echo "                                  (デフォルト: off — 意図しない漏洩を防ぐ)"
+echo "  CLAUDE_MEMORY_SKIP_SECRET_SCAN=1 シークレットスキャナを一時的にバイパス"
 echo ""
 echo "アンインストール:"
 echo "  node ~/.claude/skills/memory-sync/bin/uninstall.js"

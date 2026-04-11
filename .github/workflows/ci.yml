@@ -1,0 +1,78 @@
+name: CI
+
+# 安全性メモ:
+# 本ワークフローは github.event.* を一切参照しない。全ての動的値は
+# matrix / env / 公式環境変数 ($GITHUB_WORKSPACE) のみから取得する。
+# untrusted input による command injection のリスクはない。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: shellcheck install.sh hooks/*.sh bin/cm
+
+  node-syntax:
+    name: node syntax check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: node --check bin scripts
+        run: |
+          node --check bin/setup.js
+          node --check bin/uninstall.js
+      - name: verify ESM works via package.json type=module
+        run: node -e "console.log('node', process.version, 'ESM OK')"
+
+  scan-secrets-smoke:
+    name: scan-secrets smoke test
+    runs-on: ubuntu-latest
+    env:
+      CLAUDE_MEMORY_DIR: /tmp/test-mem
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up test memory repo
+        run: |
+          mkdir -p "$CLAUDE_MEMORY_DIR"
+          cd "$CLAUDE_MEMORY_DIR"
+          git init -q -b main
+          git config user.email test@example.com
+          git config user.name Tester
+          echo 'safe content' > global.md
+      - name: clean changes should pass (exit 0)
+        run: bash hooks/scan-secrets.sh
+      - name: OpenAI-style key should fail (exit 1)
+        run: |
+          echo 'leaked: sk-proj-abcdef1234567890abcdef1234567890' >> "$CLAUDE_MEMORY_DIR/global.md"
+          if bash hooks/scan-secrets.sh; then
+            echo "FAIL: scanner did not detect leaked key"
+            exit 1
+          fi
+      - name: PEM private key should fail (exit 1)
+        run: |
+          git -C "$CLAUDE_MEMORY_DIR" checkout global.md
+          printf -- '-----BEGIN RSA PRIVATE KEY-----\nMIIEow==\n-----END RSA PRIVATE KEY-----\n' >> "$CLAUDE_MEMORY_DIR/global.md"
+          if bash hooks/scan-secrets.sh; then
+            echo "FAIL: scanner did not detect PEM key"
+            exit 1
+          fi
+      - name: bypass flag should allow even with secret
+        env:
+          CLAUDE_MEMORY_SKIP_SECRET_SCAN: "1"
+        run: bash hooks/scan-secrets.sh

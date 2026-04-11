@@ -108,12 +108,15 @@ Stop              → Claude が応答を止めたとき
 ### 記憶の構造
 
 ```
-~/.claude-memory/               ← プライベートGitリポジトリ
-  global.md                     # 全PJ共通の設計方針（手動編集）
+~/.claude-memory/               ← プライベート Git リポジトリ
+  global.md                     # 全 PJ 共通の設計方針 (手動編集)
   repos/
-    drone-platform.md           # Claude が自動追記するPJ固有の記憶
-    personal-tool.md
+    github.com-you-project-a.md # Claude が自動追記する PJ 固有の記憶
+    github.com-you-project-b.md
 ```
+
+ファイル名は git remote origin URL を slug 化したもの。同じ basename の
+リポジトリが別の remote を持っていても衝突しない。
 
 `global.md` には個人の癖・設計方針のみ書く。コードは書かない。
 
@@ -235,17 +238,19 @@ cm clean      # ~/.claude/CLAUDE.md の注入ブロックを削除
 
 ## 複数リポジトリの運用
 
-20リポジトリ並行でも設定は変わらない。
+20 リポジトリ並行でも設定は変わらない。
 
 - **個人の癖・設計方針** → `global.md`。全リポジトリで共通
-- **PJ固有の文脈** → Claude が自動で `repos/{repo}.md` に分けて記憶
+- **PJ 固有の文脈** → Claude が自動で `repos/{project-key}.md` に分けて記憶
+
+project-key は現在ディレクトリの git remote origin URL を slug 化したもの:
 
 ```
-drone-platform/ で作業
-  → global.md + repos/drone-platform.md が注入される
+~/code/project-a で作業 (git remote = github.com:you/project-a)
+  → global.md + repos/github.com-you-project-a.md が注入される
 
-personal-tool/ で作業
-  → global.md + repos/personal-tool.md が注入される
+~/code/project-b で作業 (git remote = github.com:you/project-b)
+  → global.md + repos/github.com-you-project-b.md が注入される
 ```
 
 ディレクトリを移動するだけで自動切り替え。

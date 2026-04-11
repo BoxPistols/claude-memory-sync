@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // claude-memory-sync: setup
 // ~/.claude/settings.json に hook を登録する
+//
+// 重複検知は専用プロパティ `_claude_memory_sync: true` を使って厳密に行う
+// ので、ユーザーが別の memory-sync っぽい名前の hook を持っていても
+// 干渉しない。
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
@@ -12,54 +16,62 @@ const SKILL_DIR = dirname(__dirname);
 const CLAUDE_DIR = join(homedir(), '.claude');
 const SETTINGS_PATH = join(CLAUDE_DIR, 'settings.json');
 
-const HOOK_START   = join(SKILL_DIR, 'hooks', 'start.sh');
-const HOOK_STOP    = join(SKILL_DIR, 'hooks', 'stop.sh');
+const HOOK_START = join(SKILL_DIR, 'hooks', 'start.sh');
+const HOOK_STOP = join(SKILL_DIR, 'hooks', 'stop.sh');
 const HOOK_CLEANUP = join(SKILL_DIR, 'hooks', 'cleanup.sh');
 
-// settings.json を読み込み（なければ初期化）
+// settings.json を読み込み (なければ初期化)
 let settings = {};
 if (existsSync(SETTINGS_PATH)) {
   try {
     settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'));
   } catch {
-    console.error('❌ settings.json のパースに失敗しました');
+    console.error('[error] settings.json のパースに失敗しました');
     process.exit(1);
   }
 }
 
 if (!settings.hooks) settings.hooks = {};
 
-// ── UserPromptSubmit hook（セッション開始・記憶注入）──────────
-if (!settings.hooks.UserPromptSubmit) settings.hooks.UserPromptSubmit = [];
+// claude-memory-sync が所有する hook を識別するマーカー
+const MARKER = '_claude_memory_sync';
 
-const alreadyHasStart = settings.hooks.UserPromptSubmit.some(
-  h => h.hooks?.some(hh => hh.command?.includes('memory-sync'))
-);
-if (!alreadyHasStart) {
-  settings.hooks.UserPromptSubmit.push({
+/**
+ * 指定イベントから claude-memory-sync が登録した hook を全て除去する。
+ * マーカーで識別するので、ユーザーが別途追加した hook は触らない。
+ */
+function removeOwnedHooks(eventName) {
+  const list = settings.hooks[eventName];
+  if (!Array.isArray(list)) return;
+  settings.hooks[eventName] = list.filter((entry) => !entry[MARKER]);
+  if (settings.hooks[eventName].length === 0) {
+    delete settings.hooks[eventName];
+  }
+}
+
+/**
+ * hook エントリを追加する。必ずマーカー付きで追加し、同じイベントに既にある
+ * claude-memory-sync 所有の hook は先に除去する (idempotent)。
+ */
+function installHook(eventName, hookCommand) {
+  removeOwnedHooks(eventName);
+  if (!settings.hooks[eventName]) settings.hooks[eventName] = [];
+  settings.hooks[eventName].push({
     matcher: '',
-    hooks: [{ type: 'command', command: `bash "${HOOK_START}"` }],
+    hooks: [{ type: 'command', command: hookCommand }],
+    [MARKER]: true,
   });
 }
 
-// ── Stop hook（セッション終了・自動push）─────────────────────
-if (!settings.hooks.Stop) settings.hooks.Stop = [];
-
-const alreadyHasStop = settings.hooks.Stop.some(
-  h => h.hooks?.some(hh => hh.command?.includes('memory-sync'))
-);
-if (!alreadyHasStop) {
-  settings.hooks.Stop.push({
-    matcher: '',
-    hooks: [{ type: 'command', command: `bash "${HOOK_STOP}"` }],
-  });
-}
+// ── 各 hook を登録 ─────────────────────────────────────────────
+installHook('UserPromptSubmit', `bash "${HOOK_START}"`);
+installHook('Stop', `bash "${HOOK_STOP}"`);
 
 // 書き込み
 mkdirSync(CLAUDE_DIR, { recursive: true });
 writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
 
-console.log('✓ hook を ~/.claude/settings.json に登録しました');
+console.log('ok hook を ~/.claude/settings.json に登録しました');
 console.log(`  UserPromptSubmit: ${HOOK_START}`);
 console.log(`  Stop:             ${HOOK_STOP}`);
-console.log(`  cleanup:          ${HOOK_CLEANUP}  （手動実行）`);
+console.log(`  cleanup:          ${HOOK_CLEANUP}  (手動実行 / cm clean)`);

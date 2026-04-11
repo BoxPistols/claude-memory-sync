@@ -13,7 +13,7 @@ INJECT_END="<!-- claude-memory-sync:end -->"
 LEGACY_MARKER="<!-- claude-memory-sync: auto-generated -->"
 
 if [ ! -f "$CLAUDE_MD" ]; then
-  echo "~/.claude/CLAUDE.md が存在しません"
+  echo "$CLAUDE_MD が存在しません"
   exit 0
 fi
 
