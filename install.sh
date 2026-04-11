@@ -1,12 +1,12 @@
 #!/bin/bash
 # claude-memory-sync インストーラ
-# 使い方: curl -fsSL https://raw.githubusercontent.com/yourname/claude-memory-sync/main/install.sh | bash
+# 使い方: curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/install.sh | bash
 
 set -euo pipefail
 
 SKILL_DIR="${HOME}/.claude/skills/memory-sync"
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
-REPO_URL="https://github.com/yourname/claude-memory-sync"  # ← 公開後に自分のURLに変更
+REPO_URL="https://github.com/BoxPistols/claude-memory-sync"  # ← 公開後に自分のURLに変更
 
 echo ""
 echo "🧠 claude-memory-sync セットアップ"
@@ -77,7 +77,7 @@ if [ -d "$MEMORY_DIR/.git" ]; then
 else
   echo ""
   echo "  GitHubにプライベートリポジトリを作成してURLを入力してください"
-  echo "  例: git@github.com:yourname/claude-memory-private.git"
+  echo "  例: git@github.com:YOUR-USERNAME/claude-memory-private.git"
   echo "  （空 Enter でローカルのみ / Git同期なし）"
   echo ""
 
