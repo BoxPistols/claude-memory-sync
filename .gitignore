@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+pnpm-debug.log
+
+# sed / editor backups
+*.bak
+*.swp
+*.swo
+*~
+
+# Local dev / test artifacts
+/tmp/
+*.log
+
+# Claude Code local state (this repo's own scratch state)
+.claude/settings.local.json
+
+# Zenn publish artifacts
+.zenn/

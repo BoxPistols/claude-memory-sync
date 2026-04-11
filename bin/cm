@@ -1,0 +1,88 @@
+#!/bin/bash
+# cm - claude-memory sync
+# 記憶リポジトリを手動で pull → commit → push する
+
+set -euo pipefail
+
+MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
+CMD="${1:-sync}"
+
+usage() {
+  echo "使い方: cm [コマンド]"
+  echo ""
+  echo "コマンド:"
+  echo "  sync    pull → commit → push（デフォルト）"
+  echo "  status  記憶の現在の状態を表示"
+  echo "  edit    global.md をエディタで開く"
+  echo "  clean   ~/.claude/CLAUDE.md の注入ブロックを削除"
+  echo ""
+}
+
+if [ "$CMD" = "--help" ] || [ "$CMD" = "-h" ]; then
+  usage
+  exit 0
+fi
+
+if [ ! -d "$MEMORY_DIR" ]; then
+  echo "❌ 記憶リポジトリが見つかりません: $MEMORY_DIR"
+  echo "   install.sh を実行してセットアップしてください"
+  exit 1
+fi
+
+case "$CMD" in
+  sync)
+    cd "$MEMORY_DIR"
+
+    # pull（リモートがある場合のみ）
+    if git remote | grep -q .; then
+      git pull --quiet --ff-only 2>/dev/null || true
+    fi
+
+    if [ -z "$(git status --porcelain)" ]; then
+      echo "✓ 変更なし（最新の状態です）"
+      exit 0
+    fi
+
+    TIMESTAMP=$(date '+%m/%d %H:%M')
+    git add .
+    git status --short
+    git commit -m "manual: ${TIMESTAMP}" --quiet
+
+    if git remote | grep -q .; then
+      git push --quiet
+      echo "✓ 同期しました（push 完了）"
+    else
+      echo "✓ コミットしました（リモートなし）"
+    fi
+    ;;
+
+  status)
+    echo "📁 記憶リポジトリ: $MEMORY_DIR"
+    echo ""
+    echo "── ファイル一覧 ──"
+    find "$MEMORY_DIR" -name "*.md" ! -path "*/.git/*" | sort | while read -r f; do
+      SIZE=$(wc -l < "$f")
+      echo "  ${f#$MEMORY_DIR/}  (${SIZE}行)"
+    done
+    echo ""
+    echo "── Git 状態 ──"
+    git -C "$MEMORY_DIR" status --short
+    ;;
+
+  edit)
+    EDITOR="${EDITOR:-nano}"
+    "$EDITOR" "$MEMORY_DIR/global.md"
+    ;;
+
+  clean)
+    SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    bash "$SKILL_DIR/hooks/cleanup.sh"
+    ;;
+
+  *)
+    echo "❌ 不明なコマンド: $CMD"
+    echo ""
+    usage
+    exit 1
+    ;;
+esac

@@ -1,0 +1,46 @@
+{
+  "name": "claude-memory-sync",
+  "version": "0.1.0",
+  "description": "Claude Code にセッション間の記憶を持たせる自作メモリ層。外部サービス不要・コストゼロ・Git で完全自己管理。",
+  "type": "module",
+  "bin": {
+    "cm": "bin/cm"
+  },
+  "scripts": {
+    "setup": "node bin/setup.js",
+    "uninstall": "node bin/uninstall.js",
+    "lint:sh": "shellcheck install.sh hooks/*.sh bin/cm",
+    "test": "echo 'no unit tests yet'"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "memory",
+    "context",
+    "git",
+    "skill",
+    "self-hosted"
+  ],
+  "author": "BoxPistols",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BoxPistols/claude-memory-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BoxPistols/claude-memory-sync/issues"
+  },
+  "homepage": "https://github.com/BoxPistols/claude-memory-sync#readme",
+  "files": [
+    "bin",
+    "hooks",
+    "template",
+    "install.sh",
+    "LICENSE",
+    "README.md",
+    "SKILL.md"
+  ]
+}
