@@ -84,3 +84,59 @@ jobs:
         run: |
           echo 'leaked: sk-proj-abcdef1234567890abcdef1234567890' >> "$CLAUDE_MEMORY_DIR/global.md"
           bash hooks/scan-secrets.sh
+
+  stage-md-smoke:
+    name: stage-md smoke test (untracked subdir regression)
+    runs-on: ubuntu-latest
+    # Regression guard for the bug fixed in #1: `git add -- ':(glob)**.md'`
+    # silently failed to stage `.md` files inside untracked directories,
+    # so the very first `repos/<slug>.md` never got committed.
+    env:
+      CLAUDE_MEMORY_DIR: /home/runner/test-claude-memory
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up test memory repo with initial commit
+        run: |
+          mkdir -p "$CLAUDE_MEMORY_DIR"
+          cd "$CLAUDE_MEMORY_DIR"
+          git init -q -b main
+          git config user.email test@example.com
+          git config user.name Tester
+          echo 'safe content' > global.md
+          git add global.md
+          git commit -q -m "initial test fixture"
+      - name: New .md inside untracked subdir is committed by stop hook
+        run: |
+          mkdir -p "$CLAUDE_MEMORY_DIR/repos"
+          echo '# new project memory' > "$CLAUDE_MEMORY_DIR/repos/new.md"
+          bash "$GITHUB_WORKSPACE/hooks/stop.sh"
+          if ! git -C "$CLAUDE_MEMORY_DIR" log -1 --name-only --format= | grep -qx 'repos/new.md'; then
+            echo "FAIL: repos/new.md was not committed by stop.sh"
+            git -C "$CLAUDE_MEMORY_DIR" status
+            git -C "$CLAUDE_MEMORY_DIR" log --oneline -5
+            exit 1
+          fi
+      - name: Deletion of tracked .md is committed (documents -A behavior change)
+        run: |
+          rm "$CLAUDE_MEMORY_DIR/global.md"
+          bash "$GITHUB_WORKSPACE/hooks/stop.sh"
+          if git -C "$CLAUDE_MEMORY_DIR" cat-file -e HEAD:global.md 2>/dev/null; then
+            echo "FAIL: deletion of global.md was not committed"
+            git -C "$CLAUDE_MEMORY_DIR" log --oneline -5
+            exit 1
+          fi
+      - name: Non-.md files stay unstaged (pathspec safety)
+        run: |
+          echo 'SECRET=should_not_be_committed' > "$CLAUDE_MEMORY_DIR/.env"
+          echo '# another memory' > "$CLAUDE_MEMORY_DIR/repos/another.md"
+          bash "$GITHUB_WORKSPACE/hooks/stop.sh"
+          # .env must NOT appear in any commit
+          if git -C "$CLAUDE_MEMORY_DIR" log --all --name-only --format= | grep -qx '.env'; then
+            echo "FAIL: .env was committed — pathspec safety regressed"
+            exit 1
+          fi
+          # but the new .md should be committed
+          if ! git -C "$CLAUDE_MEMORY_DIR" log -1 --name-only --format= | grep -qx 'repos/another.md'; then
+            echo "FAIL: repos/another.md was not committed"
+            exit 1
+          fi
