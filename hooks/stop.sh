@@ -70,7 +70,9 @@ REPO=$(basename "$(pwd)")
 TIMESTAMP=$(date '+%m/%d %H:%M')
 
 # .md ファイルのみをステージング (意図しないファイルの commit を防ぐ)
-git add -- ':(glob)**.md'
+# -A は untracked ディレクトリ配下の新規 .md も拾うために必要。
+# pathspec '*.md' により .env など他形式は除外される。
+git add -A -- '*.md'
 
 # .md 以外の変更のみの場合はステージング対象がなく commit 不要
 if [ -z "$(git diff --cached --name-only)" ]; then

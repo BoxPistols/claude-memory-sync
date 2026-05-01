@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **新規 `repos/<slug>.md` が初回 sync で commit されない問題** — `bin/cm sync` /
+  `hooks/stop.sh` の `git add -- ':(glob)**.md'` がディレクトリ自体 untracked な
+  サブディレクトリ配下の `.md` を拾わず、初めて project 固有メモリを作った直後の
+  `claude-mem` が「nothing added to commit」で止まっていた。`git add -A -- '*.md'`
+  に置換して解決。副次効果として、tracked `.md` の **削除** も auto-commit 対象に
+  なる (これまでは手動 `git rm` が必要だった)
+
 ### Security (post-v0.1.0 監査で発見・修正)
 
 - **[CRITICAL] プロンプトインジェクション脆弱性修正 (S-3)** — 攻撃者が memory

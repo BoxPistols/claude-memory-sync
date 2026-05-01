@@ -123,7 +123,9 @@ case "$CMD" in
 
     TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
     # .md ファイルのみをステージング (意図しないファイルの commit を防ぐ)
-    git add -- ':(glob)**.md'
+    # -A は untracked ディレクトリ配下の新規 .md も拾うために必要。
+    # pathspec '*.md' により .env など他形式は除外される。
+    git add -A -- '*.md'
     echo ""
     echo "▶ 変更ファイル:"
     git status --short
