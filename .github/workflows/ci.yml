@@ -151,6 +151,8 @@ jobs:
       CLAUDE_MEMORY_DIR: /home/runner/test-claude-memory
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # GITHUB_TOKEN を .git/config に残さない (zizmor artipacked)
       - name: Set up memory repo tracking a bare remote
         run: |
           git init -q --bare /home/runner/mem-remote.git
