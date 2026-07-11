@@ -132,10 +132,10 @@ case "$CMD" in
           fi
           rm -f "$ERR_FILE"
         fi
-      elif [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
-        # リモート/上流が無くても、履歴に secret が眠っていないかは検査しておく
-        CLAUDE_MEMORY_SCAN_MODE=history "$SKILL_DIR/hooks/scan-secrets.sh" || exit 1
       fi
+      # リモート/上流が無い場合は push しようがなく、history scan は
+      # 上流未設定時に全履歴 (git log -p) へフォールバックして重いだけなので
+      # 行わない。secret は commit 時 (working mode) に検査済み。
       exit 0
     fi
 
