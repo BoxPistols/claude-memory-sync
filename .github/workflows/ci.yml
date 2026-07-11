@@ -140,3 +140,46 @@ jobs:
             echo "FAIL: repos/another.md was not committed"
             exit 1
           fi
+
+  cm-sync-clean-tree-push:
+    name: cm sync pushes unpushed commits on clean tree
+    runs-on: ubuntu-latest
+    # Regression guard: Stop hook auto-commits leave a clean tree; `cm sync`
+    # used to exit 0 after the history scan WITHOUT pushing the ahead commits,
+    # so the daily "auto commit -> cm" flow never reached the remote.
+    env:
+      CLAUDE_MEMORY_DIR: /home/runner/test-claude-memory
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # GITHUB_TOKEN を .git/config に残さない (zizmor artipacked)
+      - name: Set up memory repo tracking a bare remote
+        run: |
+          git init -q --bare /home/runner/mem-remote.git
+          git clone -q /home/runner/mem-remote.git "$CLAUDE_MEMORY_DIR"
+          cd "$CLAUDE_MEMORY_DIR"
+          git config user.email test@example.com
+          git config user.name Tester
+          git commit -q --allow-empty -m "initial"
+          git push -q -u origin HEAD
+      - name: Stop hook commits and leaves the tree clean
+        run: |
+          echo '# memory' > "$CLAUDE_MEMORY_DIR/global.md"
+          bash "$GITHUB_WORKSPACE/hooks/stop.sh"
+          if [ -n "$(git -C "$CLAUDE_MEMORY_DIR" status --porcelain)" ]; then
+            echo "FAIL: tree is not clean after stop.sh"
+            exit 1
+          fi
+          ahead=$(git -C "$CLAUDE_MEMORY_DIR" rev-list --count '@{u}..HEAD')
+          if [ "$ahead" -eq 0 ]; then
+            echo "FAIL: fixture broken — expected an unpushed commit"
+            exit 1
+          fi
+      - name: cm sync pushes the unpushed commit
+        run: |
+          bash "$GITHUB_WORKSPACE/bin/cm" sync
+          ahead=$(git -C "$CLAUDE_MEMORY_DIR" rev-list --count '@{u}..HEAD')
+          if [ "$ahead" -ne 0 ]; then
+            echo "FAIL: cm sync left $ahead unpushed commit(s)"
+            exit 1
+          fi

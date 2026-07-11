@@ -107,10 +107,35 @@ case "$CMD" in
     if [ -z "$(git status --porcelain)" ]; then
       echo "✓ 変更なし (最新の状態です)"
       show_tracking_state
-      # push 可能な未 push commit があるか念のため scan-secrets で検査
-      if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
-        CLAUDE_MEMORY_SCAN_MODE=history "$SKILL_DIR/hooks/scan-secrets.sh" || exit 1
+      # Stop hook が commit 済みでツリーがクリーンなケース。
+      # 未 push commit が残っていれば history scan を通した上で push する
+      # (以前はここで scan だけして exit していたため、日常フローの
+      # 「auto commit → 後で cm」で push が永遠に行われないバグがあった)。
+      if has_remote && git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+        AHEAD=$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)
+        if [ "$AHEAD" -gt 0 ]; then
+          if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
+            CLAUDE_MEMORY_SCAN_MODE=history "$SKILL_DIR/hooks/scan-secrets.sh" || exit 1
+          fi
+          echo "▶ 未 push の ${AHEAD} コミットを push..."
+          ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-cm-push.XXXXXX")
+          if git push --quiet 2>"$ERR_FILE"; then
+            echo "✓ push 完了"
+          else
+            echo "" >&2
+            echo "❌ push 失敗" >&2
+            cat "$ERR_FILE" >&2 || true
+            echo "" >&2
+            echo "  ネットワーク / 認証 / 上流分岐を確認してください" >&2
+            rm -f "$ERR_FILE"
+            exit 1
+          fi
+          rm -f "$ERR_FILE"
+        fi
       fi
+      # リモート/上流が無い場合は push しようがなく、history scan は
+      # 上流未設定時に全履歴 (git log -p) へフォールバックして重いだけなので
+      # 行わない。secret は commit 時 (working mode) に検査済み。
       exit 0
     fi
 

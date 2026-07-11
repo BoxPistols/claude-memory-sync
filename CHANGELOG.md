@@ -6,6 +6,13 @@
 
 ### Fixed
 
+- **`cm sync` がクリーンツリー時に未 push commit を push しない問題** —
+  Stop hook が auto commit した後 (ワーキングツリーはクリーン) に `cm` を
+  実行すると、「✓ 変更なし」と表示して history scan だけ行い、ahead な
+  commit を push せずに exit 0 していた。README・記事が推奨する
+  「auto commit → 区切りで cm」の日常フローで記憶がローカルに留まり続ける。
+  クリーンツリー分岐でも ahead > 0 なら history scan 通過後に push する
+  よう修正し、CI に回帰テスト (cm-sync-clean-tree-push) を追加
 - **新規 `repos/<slug>.md` が初回 sync で commit されない問題** — `bin/cm sync` /
   `hooks/stop.sh` の `git add -- ':(glob)**.md'` がディレクトリ自体 untracked な
   サブディレクトリ配下の `.md` を拾わず、初めて project 固有メモリを作った直後の
@@ -15,6 +22,12 @@
 
 ### Security (post-v0.1.0 監査で発見・修正)
 
+- **[MEDIUM] レガシーマーカーのサニタイズ漏れ修正** — `hooks/start.sh` の
+  `sanitize_memory()` が旧 v0.0.x マーカー
+  (`<!-- claude-memory-sync: auto-generated -->`) を除去対象にしていなかった。
+  memory 本文にこの 1 行が混入すると CLAUDE.md へそのまま注入され、次回
+  `cleanup.sh` 実行時にマーカー以降の CLAUDE.md 内容 (注入ブロック外の
+  手書き部分を含む) が全削除される。begin/end と同様に grep -F の除去対象へ追加
 - **[CRITICAL] プロンプトインジェクション脆弱性修正 (S-3)** — 攻撃者が memory
   repo に偽の `<!-- claude-memory-sync:begin -->` / `:end` マーカーを含む
   global.md を push することで、CLAUDE.md の注入ブロック構造を破壊し、

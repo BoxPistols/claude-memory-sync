@@ -24,6 +24,9 @@ LOG_DIR="$CLAUDE_DIR/logs"
 LOG_FILE="$LOG_DIR/claude-memory-sync.log"
 INJECT_BEGIN="<!-- claude-memory-sync:begin -->"
 INJECT_END="<!-- claude-memory-sync:end -->"
+# 旧 v0.0.x マーカー。cleanup.sh がこの行以降を全削除するため、memory 本文
+# 経由で注入されると CLAUDE.md の後続内容が破壊される。サニタイズ対象に含める。
+LEGACY_MARKER="<!-- claude-memory-sync: auto-generated -->"
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # MEMORY_DIR が HOME 以下にあることを確認 (任意パス操作の防止)
@@ -125,6 +128,7 @@ sanitize_memory() {
   grep -v -F \
     -e "$INJECT_BEGIN" \
     -e "$INJECT_END" \
+    -e "$LEGACY_MARKER" \
     "$path" 2>/dev/null || true
 }
 
