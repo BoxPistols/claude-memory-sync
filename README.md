@@ -542,6 +542,25 @@ A. 問題ありません。プロジェクト固有の記憶は `repos/{git-remo
 
 > **v0.1.x までの注意**: 以前はプロジェクト固有の記憶も `~/.claude/CLAUDE.md`（全セッション共有）へ注入していました。複数リポジトリで Claude Code を**同時起動**すると後勝ちで上書きされ、別リポジトリの記憶が混入する不具合がありました。現在は注入先を分離して解消しています。
 
+### Q. 別リポジトリが物理的にネストしている場合は？
+
+A. **この 1 パターンだけ、親の記憶が子セッションに読まれます（既知の制限）。**
+
+Claude Code は cwd から親ディレクトリを遡り、各階層の `CLAUDE.md` / `CLAUDE.local.md` を読み込みます（公式ドキュメント: 「checking each directory along the way」）。そのため `/repo-a/repo-b/`（別リポジトリが物理的に内包されている構成）で作業すると、`repo-b` のセッションは `/repo-a/CLAUDE.local.md` も読みます。
+
+これは Claude Code のメモリ読み込み仕様によるもので、本ツール側では回避できません。避けたい場合は `claudeMdExcludes` で除外してください。
+
+```json
+// .claude/settings.local.json
+{
+  "claudeMdExcludes": ["**/repo-a/**"]
+}
+```
+
+`~/.claude/settings.json` / `./.claude/settings.json` / `./.claude/settings.local.json` のいずれでも設定でき、設定層ごとに配列がマージされます。ただし組織のマネージドポリシーで配布された `CLAUDE.md` は除外できません。
+
+> **未確認**: 遡査がファイルシステムのどこまで続くか、`.git` の境界で止まるかは公式ドキュメントに明記がありません。上記は「親ディレクトリを遡る」という記載から導かれる挙動です。
+
 ### Q. Windows でも動く?
 
 A. **macOS / Linux 前提**です。`install.sh` と shell hook が POSIX シェルを要求します。WSL2 なら動くはずですが検証していません。

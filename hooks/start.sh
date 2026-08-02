@@ -164,8 +164,12 @@ ensure_local_ignored() {
 
 # 注入する内容がなければ両方の注入先から既存ブロックを削除して終了
 if [ ! -f "$GLOBAL" ] && [ ! -f "$PROJECT" ]; then
-  [ -f "$CLAUDE_MD" ] && bash "$SKILL_DIR/hooks/cleanup.sh" "$CLAUDE_MD" >/dev/null 2>&1 || true
-  [ -f "$PROJECT_MD" ] && bash "$SKILL_DIR/hooks/cleanup.sh" "$PROJECT_MD" >/dev/null 2>&1 || true
+  if [ -f "$CLAUDE_MD" ]; then
+    bash "$SKILL_DIR/hooks/cleanup.sh" "$CLAUDE_MD" >/dev/null 2>&1 || true
+  fi
+  if [ -f "$PROJECT_MD" ]; then
+    bash "$SKILL_DIR/hooks/cleanup.sh" "$PROJECT_MD" >/dev/null 2>&1 || true
+  fi
   exit 0
 fi
 
@@ -245,7 +249,9 @@ if [ -f "$GLOBAL" ]; then
   inject_into "$CLAUDE_MD" "$TMPFILE"
 else
   # global.md が消えた場合は残骸を掃除する
-  [ -f "$CLAUDE_MD" ] && bash "$SKILL_DIR/hooks/cleanup.sh" "$CLAUDE_MD" >/dev/null 2>&1 || true
+  if [ -f "$CLAUDE_MD" ]; then
+    bash "$SKILL_DIR/hooks/cleanup.sh" "$CLAUDE_MD" >/dev/null 2>&1 || true
+  fi
 fi
 
 # ── プロジェクト固有の記憶 → <project-root>/CLAUDE.local.md ──
@@ -269,5 +275,7 @@ if [ -f "$PROJECT" ]; then
   fi
 else
   # このプロジェクトの記憶が無い場合、前回の残骸を掃除する
-  [ -f "$PROJECT_MD" ] && bash "$SKILL_DIR/hooks/cleanup.sh" "$PROJECT_MD" >/dev/null 2>&1 || true
+  if [ -f "$PROJECT_MD" ]; then
+    bash "$SKILL_DIR/hooks/cleanup.sh" "$PROJECT_MD" >/dev/null 2>&1 || true
+  fi
 fi
