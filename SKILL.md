@@ -21,8 +21,17 @@ Claude Code のセッション間で設計方針・知見を永続化するス�
 1. 記憶リポジトリが Git 管理であれば `git pull --ff-only` を試行 (失敗しても続行、`/tmp/claude-memory-sync.log` にログ)
 2. `~/.claude-memory/global.md` を読み込む
 3. `~/.claude-memory/repos/{project-key}.md` が存在すれば読み込む
-4. 両方を `~/.claude/CLAUDE.md` の末尾に `<!-- claude-memory-sync:begin -->` 〜 `<!-- claude-memory-sync:end -->` マーカーで包んで注入
-5. プロジェクト内の `CLAUDE.md` には一切書かない
+4. `<!-- claude-memory-sync:begin -->` 〜 `<!-- claude-memory-sync:end -->` マーカーで包んで、**注入先を分けて**書き込む
+   - グローバル記憶 → `~/.claude/CLAUDE.md`
+   - プロジェクト固有の記憶 → `<project-root>/CLAUDE.local.md`
+5. プロジェクトの `CLAUDE.md`（追跡対象）には一切書かない。`CLAUDE.local.md` は未 ignore なら
+   `.git/info/exclude` へ追記してから書くので、追跡対象の `.gitignore` も汚さない
+
+> **なぜプロジェクト固有分を分けるか**: `~/.claude/CLAUDE.md` はマシン上の全 Claude Code
+> セッションが共有する単一ファイルで、本フックは `UserPromptSubmit` ごとに全体を書き換える。
+> 複数リポジトリで同時にセッションを開くと後勝ちで上書きされ、別リポジトリの記憶が混入する。
+> `CLAUDE.local.md` は `CLAUDE.md` の直後に読まれる公式の仕組みで、注入先が
+> セッションごとに分かれるためこの競合が構造的に消える。
 
 ## セッション終了時の動作
 
@@ -64,7 +73,7 @@ Claude Code のセッション間で設計方針・知見を永続化するス�
 cm         # pull → commit → push (push は確認あり)
 cm status  # ファイル一覧 + ahead/behind 表示
 cm edit    # global.md をエディタで開く
-cm clean   # ~/.claude/CLAUDE.md から注入ブロックを削除
+cm clean   # ~/.claude/CLAUDE.md と ./CLAUDE.local.md から注入ブロックを削除
 ```
 
 作業後に `cm` を叩くだけで全 PC に記憶が伝播する。

@@ -1,17 +1,25 @@
 #!/bin/bash
 # claude-memory-sync: cleanup
-# ~/.claude/CLAUDE.md から claude-memory-sync の注入ブロックを削除する。
+# 指定ファイルから claude-memory-sync の注入ブロックを削除する。
+# 引数を省略すると ~/.claude/CLAUDE.md (グローバル注入先) を対象にする。
 # アンインストール時や手動クリーンアップ時に使用。
+#
+# 使い方:
+#   cleanup.sh                      # ~/.claude/CLAUDE.md
+#   cleanup.sh /path/CLAUDE.local.md  # プロジェクト固有の注入先
 #
 # 堅牢性の担保:
 #   - 複数の begin/end ペアが混ざっていても、全ての begin/end マーカー行を
 #     除去しつつ、その間の行も削除する。
 #   - 偽 begin / 偽 end による攻撃的な残留 (プロンプトインジェクション持ち込み)
 #     を防ぐため、1 ブロック目の end で停止せず、最後の end まで読む。
+#   - 削除の結果、中身が空になった CLAUDE.local.md はファイルごと削除する
+#     (ユーザーのリポジトリに空ファイルを残さない)。ユーザー自身の記述が
+#     残っている場合は削除しない。
 
 set -euo pipefail
 
-CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+CLAUDE_MD="${1:-$HOME/.claude/CLAUDE.md}"
 INJECT_BEGIN="<!-- claude-memory-sync:begin -->"
 INJECT_END="<!-- claude-memory-sync:end -->"
 
@@ -53,6 +61,18 @@ awk '
   { while (blank-- > 0) print ""; blank = 0; print }
   END { if (blank > 0) print "" }
 ' "$TMP" > "$TMP2"
+
+# 注入ブロックしか無かった CLAUDE.local.md は、空ファイルを残さず削除する。
+# グローバル側 (~/.claude/CLAUDE.md) はユーザーが手で書く前提のファイルなので消さない。
+case "$CLAUDE_MD" in
+  */CLAUDE.local.md)
+    if ! grep -q '[^[:space:]]' "$TMP2" 2>/dev/null; then
+      rm -f "$CLAUDE_MD"
+      echo "✓ 注入ブロックを削除しました (空になったため $CLAUDE_MD も削除)"
+      exit 0
+    fi
+    ;;
+esac
 
 # atomic rename
 mv "$TMP2" "$CLAUDE_MD"

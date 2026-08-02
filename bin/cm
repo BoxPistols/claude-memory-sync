@@ -6,7 +6,7 @@
 #   sync    (デフォルト)  pull --rebase → commit → push
 #   status                ファイル一覧 + ahead/behind + 最終 commit
 #   edit                  global.md を $EDITOR で開く
-#   clean                 ~/.claude/CLAUDE.md から注入ブロックを削除
+#   clean                 ~/.claude/CLAUDE.md と ./CLAUDE.local.md から注入ブロックを削除
 #   log                   最近の commit ログ (10 件)
 #
 # 環境変数:
@@ -29,7 +29,7 @@ usage() {
   status  記憶の現在の状態・ahead/behind・ファイル一覧を表示
   log     最近の commit 履歴を表示
   edit    global.md を \$EDITOR で開く
-  clean   ~/.claude/CLAUDE.md の注入ブロックを削除
+  clean   ~/.claude/CLAUDE.md と ./CLAUDE.local.md の注入ブロックを削除
 
 環境変数:
   CLAUDE_MEMORY_DIR              記憶リポジトリのパス
@@ -260,7 +260,12 @@ TEMPLATE
     ;;
 
   clean)
+    # グローバル注入先と、カレントプロジェクトの CLAUDE.local.md の両方を掃除する
     bash "$SKILL_DIR/hooks/cleanup.sh"
+    _proj_root=$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$PWD")
+    if [ -f "$_proj_root/CLAUDE.local.md" ]; then
+      bash "$SKILL_DIR/hooks/cleanup.sh" "$_proj_root/CLAUDE.local.md"
+    fi
     ;;
 
   *)
