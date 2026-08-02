@@ -548,7 +548,11 @@ A. **この 1 パターンだけ、親の記憶が子セッションに読まれ
 
 Claude Code は cwd から親ディレクトリを遡り、各階層の `CLAUDE.md` / `CLAUDE.local.md` を読み込みます（公式ドキュメント: 「checking each directory along the way」）。そのため `/repo-a/repo-b/`（別リポジトリが物理的に内包されている構成）で作業すると、`repo-b` のセッションは `/repo-a/CLAUDE.local.md` も読みます。
 
-これは Claude Code のメモリ読み込み仕様によるもので、本ツール側では回避できません。避けたい場合は `claudeMdExcludes` で除外してください。
+これは Claude Code のメモリ読み込み仕様によるもので、本ツール側では回避できません。
+
+**入れ子を解消できるなら、そちらが確実です。** 同じ経路で親の**追跡対象の `CLAUDE.md`**（別プロジェクトの指示そのもの）も読み込まれており、これは記憶ツールとは無関係の問題なので設定では塞ぎきれません。ディレクトリを並列に移せば両方まとめて消えます。
+
+移動できない場合は `claudeMdExcludes` で除外してください。
 
 ```json
 // .claude/settings.local.json
