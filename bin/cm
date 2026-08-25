@@ -18,7 +18,17 @@ set -euo pipefail
 
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
 CMD="${1:-sync}"
-SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# symlink (~/.local/bin/cm) 経由で起動されると $0 は symlink 自身のパスになり、
+# SKILL_DIR が ~/.local を指して hooks/ を見失う。その結果 scan-secrets.sh の
+# [ -x ] ガードが常に偽になり、push 前のシークレット検査が無言でスキップされる。
+# 実体まで辿ってから解決する。
+_cm_source="${BASH_SOURCE[0]}"
+while [ -L "$_cm_source" ]; do
+  _cm_dir="$(cd -P "$(dirname "$_cm_source")" && pwd)"
+  _cm_source="$(readlink "$_cm_source")"
+  case "$_cm_source" in /*) ;; *) _cm_source="$_cm_dir/$_cm_source" ;; esac
+done
+SKILL_DIR="$(cd -P "$(dirname "$_cm_source")/.." && pwd)"
 
 usage() {
   cat <<EOF
@@ -152,11 +162,18 @@ case "$CMD" in
     # pathspec '*.md' により .env など他形式は除外される。
     git add -A -- '*.md'
     echo ""
-    echo "▶ 変更ファイル:"
-    git status --short
-    echo ""
-    git commit -m "manual: ${TIMESTAMP}" --quiet
-    echo "✓ commit 完了"
+    # ステージされたものだけを出す。git status --short だと .md 以外の未 commit
+    # ファイルまで並び、commit 対象に見えてしまう
+    if git diff --cached --quiet; then
+      echo "▶ commit する .md の変更はありません"
+      echo ""
+    else
+      echo "▶ 変更ファイル:"
+      git diff --cached --name-status | sed 's/^/ /'
+      echo ""
+      git commit -m "manual: ${TIMESTAMP}" --quiet
+      echo "✓ commit 完了"
+    fi
 
     if has_remote; then
       # push 前に歴史側もスキャンする (過去セッションで scan をバイパスした
