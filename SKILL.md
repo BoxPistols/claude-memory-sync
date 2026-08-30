@@ -1,3 +1,8 @@
+---
+name: memory-sync
+description: "Claude Codeのセッションをまたいで設計方針と知見をMarkdownに永続化する。~/.claude-memory/global.mdとrepos/{project-key}.mdへの追記ルール、CLAUDE.local.mdへの注入先の分離、コミット前のシークレットスキャン、cmコマンドでの複数PC同期を扱う。記憶の追記・更新を頼まれたとき、または作業の締めくくりに再利用できるパターンを見つけたときに使う。Triggers: 記憶を更新, 記憶に残す, 知見を保存, グローバル記憶, global.md, claude-memory, repos/, CLAUDE.local.md, cm status, 記憶の同期, cm edit."
+---
+
 # Memory Sync Skill
 
 Claude Code のセッション間で設計方針・知見を永続化するスキル。
