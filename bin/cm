@@ -89,9 +89,10 @@ case "$CMD" in
 
     if has_remote; then
       # rebase で取り込み (fast-forward 不可能な場合でも極力進める)
+      # --autostash: 未commitの変更があるとpullが拒否され、同期すべき変更ほど同期できないため
       echo "▶ git pull --rebase..."
       ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-cm-pull.XXXXXX")
-      if ! git pull --rebase --quiet 2>"$ERR_FILE"; then
+      if ! git pull --rebase --autostash --quiet 2>"$ERR_FILE"; then
         echo "" >&2
         echo "❌ pull --rebase 失敗" >&2
         echo "" >&2
@@ -102,6 +103,17 @@ case "$CMD" in
         exit 1
       fi
       rm -f "$ERR_FILE"
+      # autostashの復元で競合しても pull は終了コード0を返す。放置すると後段の git add が競合マーカーごと commit・push する
+      CONFLICTED=$(git diff --name-only --diff-filter=U)
+      if [ -n "$CONFLICTED" ]; then
+        echo "" >&2
+        echo "❌ ローカルの変更とリモートの変更が競合しました (commit・push は行っていません)" >&2
+        while IFS= read -r f; do echo "    $f" >&2; done <<< "$CONFLICTED"
+        echo "" >&2
+        echo "  競合を解決してから git stash drop し、再度 cm sync を実行してください" >&2
+        echo "  (ローカルの変更は git stash list の autostash にも残っています)" >&2
+        exit 1
+      fi
     fi
 
     if [ -z "$(git status --porcelain)" ]; then
