@@ -108,7 +108,7 @@ case "$CMD" in
       if [ -n "$CONFLICTED" ]; then
         echo "" >&2
         echo "❌ ローカルの変更とリモートの変更が競合しました (commit・push は行っていません)" >&2
-        echo "$CONFLICTED" | sed 's/^/    /' >&2
+        while IFS= read -r f; do echo "    $f" >&2; done <<< "$CONFLICTED"
         echo "" >&2
         echo "  競合を解決してから git stash drop し、再度 cm sync を実行してください" >&2
         echo "  (ローカルの変更は git stash list の autostash にも残っています)" >&2
