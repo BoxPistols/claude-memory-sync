@@ -89,9 +89,10 @@ case "$CMD" in
 
     if has_remote; then
       # rebase で取り込み (fast-forward 不可能な場合でも極力進める)
+      # --autostash: 未commitの変更があるとpullが拒否され、同期すべき変更ほど同期できないため
       echo "▶ git pull --rebase..."
       ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-cm-pull.XXXXXX")
-      if ! git pull --rebase --quiet 2>"$ERR_FILE"; then
+      if ! git pull --rebase --autostash --quiet 2>"$ERR_FILE"; then
         echo "" >&2
         echo "❌ pull --rebase 失敗" >&2
         echo "" >&2
