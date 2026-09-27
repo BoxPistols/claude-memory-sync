@@ -6,7 +6,7 @@
 #
 # プロジェクト固有分を ~/.claude/CLAUDE.md に入れない理由:
 #   ~/.claude/CLAUDE.md はマシン上の全 Claude Code セッションが共有する単一ファイルで、
-#   本フックは UserPromptSubmit ごとに全体を書き換える。複数リポジトリで同時に
+#   本フックはセッション開始(SessionStart)ごとに全体を書き換える。複数リポジトリで同時に
 #   セッションを開いていると後勝ちで上書きされ、別リポジトリの記憶が混入する。
 #   プロジェクト直下の CLAUDE.local.md へ書けば注入先がセッションごとに分かれ、
 #   この競合が構造的に消える (CLAUDE.local.md は CLAUDE.md の直後に読まれる公式の仕組み)。
@@ -77,7 +77,16 @@ rotate_log
 if [ -d "$MEMORY_DIR/.git" ]; then
   if git -C "$MEMORY_DIR" remote | grep -q .; then
     ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-pull.XXXXXX")
-    if ! git -C "$MEMORY_DIR" pull --quiet --ff-only 2>"$ERR_FILE"; then
+    # オフライン時にセッション開始を待たせないよう、CLAUDE_MEMORY_PULL_TIMEOUT秒(既定5)で打ち切って手元の記憶で始める。
+    # macOSにはtimeoutコマンドが無いので、監視用のサブシェルでkillする(出力はhookのstdoutに混ぜない)
+    git -C "$MEMORY_DIR" pull --quiet --ff-only 2>"$ERR_FILE" &
+    PULL_PID=$!
+    ( sleep "${CLAUDE_MEMORY_PULL_TIMEOUT:-5}"; kill "$PULL_PID" 2>/dev/null ) >/dev/null 2>&1 &
+    WATCH_PID=$!
+    PULL_RC=0
+    wait "$PULL_PID" || PULL_RC=$?
+    kill "$WATCH_PID" 2>/dev/null || true
+    if [ "$PULL_RC" -ne 0 ]; then
       {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] start.sh: pull --ff-only failed"
         cat "$ERR_FILE" 2>/dev/null || true

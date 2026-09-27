@@ -40,10 +40,19 @@ const MARKER = '_claude_memory_sync';
  * 指定イベントから claude-memory-sync が登録した hook を全て除去する。
  * マーカーで識別するので、ユーザーが別途追加した hook は触らない。
  */
+// マーカー導入前に登録されたhookも自分のものとして扱う(再セットアップで二重登録しないため)
+function isOwned(entry) {
+  if (entry[MARKER]) return true;
+  return (entry.hooks ?? []).some((h) => {
+    const cmd = h.command ?? '';
+    return cmd.includes(HOOK_START) || cmd.includes(HOOK_STOP);
+  });
+}
+
 function removeOwnedHooks(eventName) {
   const list = settings.hooks[eventName];
   if (!Array.isArray(list)) return;
-  settings.hooks[eventName] = list.filter((entry) => !entry[MARKER]);
+  settings.hooks[eventName] = list.filter((entry) => !isOwned(entry));
   if (settings.hooks[eventName].length === 0) {
     delete settings.hooks[eventName];
   }
@@ -53,19 +62,28 @@ function removeOwnedHooks(eventName) {
  * hook エントリを追加する。必ずマーカー付きで追加し、同じイベントに既にある
  * claude-memory-sync 所有の hook は先に除去する (idempotent)。
  */
-function installHook(eventName, hookCommand) {
-  removeOwnedHooks(eventName);
+function installHook(eventName, hookCommand, extra = {}) {
   if (!settings.hooks[eventName]) settings.hooks[eventName] = [];
   settings.hooks[eventName].push({
     matcher: '',
-    hooks: [{ type: 'command', command: hookCommand }],
+    hooks: [{ type: 'command', command: hookCommand, ...extra }],
     [MARKER]: true,
   });
 }
 
+// --auto-push: 記憶を自動でpushする。環境変数はマシン間で同期されないので、hookのコマンドに埋め込む
+const AUTO_PUSH = process.argv.includes('--auto-push');
+const PUSH_ENV = AUTO_PUSH ? 'CLAUDE_MEMORY_AUTO_PUSH=1 ' : '';
+
 // ── 各 hook を登録 ─────────────────────────────────────────────
-installHook('UserPromptSubmit', `bash "${HOOK_START}"`);
-installHook('Stop', `bash "${HOOK_STOP}"`);
+// CLAUDE.mdはセッション開始時と/compact後にしか読まれないので、pullと合成はセッション開始時の1回だけ行う。
+// 旧版が登録したUserPromptSubmitのhookもここで除去する
+for (const event of Object.keys(settings.hooks)) removeOwnedHooks(event);
+installHook('SessionStart', `bash "${HOOK_START}"`);
+// 応答の終わり: commitと間隔を空けたpush。応答を待たせないよう非同期
+installHook('Stop', `${PUSH_ENV}bash "${HOOK_STOP}"`, { async: true });
+// 終了時: 間隔に関係なくpushまで終える
+installHook('SessionEnd', `${PUSH_ENV}CLAUDE_MEMORY_FINAL=1 bash "${HOOK_STOP}"`, { timeout: 30 });
 
 // Atomic write: 一時ファイル → rename で差し替える
 // writeFileSync だけだと途中クラッシュで settings.json が truncate され、
@@ -81,6 +99,6 @@ try {
 renameSync(tmpPath, SETTINGS_PATH);  // POSIX atomic rename
 
 console.log('ok hook を ~/.claude/settings.json に登録しました');
-console.log(`  UserPromptSubmit: ${HOOK_START}`);
-console.log(`  Stop:             ${HOOK_STOP}`);
+console.log(`  SessionStart:     ${HOOK_START}`);
+console.log(`  Stop / SessionEnd: ${HOOK_STOP}${AUTO_PUSH ? '  (自動 push 有効)' : ''}`);
 console.log(`  cleanup:          ${HOOK_CLEANUP}  (手動実行 / cm clean)`);
