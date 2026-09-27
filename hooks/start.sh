@@ -6,7 +6,7 @@
 #
 # プロジェクト固有分を ~/.claude/CLAUDE.md に入れない理由:
 #   ~/.claude/CLAUDE.md はマシン上の全 Claude Code セッションが共有する単一ファイルで、
-#   本フックは UserPromptSubmit ごとに全体を書き換える。複数リポジトリで同時に
+#   本フックはセッション開始(SessionStart)ごとに全体を書き換える。複数リポジトリで同時に
 #   セッションを開いていると後勝ちで上書きされ、別リポジトリの記憶が混入する。
 #   プロジェクト直下の CLAUDE.local.md へ書けば注入先がセッションごとに分かれ、
 #   この競合が構造的に消える (CLAUDE.local.md は CLAUDE.md の直後に読まれる公式の仕組み)。
@@ -28,6 +28,10 @@
 #   - ログは 1MB 超で自動ローテーション。
 
 set -euo pipefail
+
+# hookの入力(JSON)。SessionStartのsource(startup/resume/clear/compact)を見る。手動実行で端末から呼ばれたときは読まない
+HOOK_INPUT=""
+[ -t 0 ] || HOOK_INPUT=$(cat 2>/dev/null || true)
 
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
 CLAUDE_DIR="$HOME/.claude"
@@ -77,7 +81,16 @@ rotate_log
 if [ -d "$MEMORY_DIR/.git" ]; then
   if git -C "$MEMORY_DIR" remote | grep -q .; then
     ERR_FILE=$(mktemp "${TMPDIR:-/tmp}/cms-pull.XXXXXX")
-    if ! git -C "$MEMORY_DIR" pull --quiet --ff-only 2>"$ERR_FILE"; then
+    # オフライン時にセッション開始を待たせないよう、CLAUDE_MEMORY_PULL_TIMEOUT秒(既定5)で打ち切って手元の記憶で始める。
+    # macOSにはtimeoutコマンドが無いので、監視用のサブシェルでkillする(出力はhookのstdoutに混ぜない)
+    git -C "$MEMORY_DIR" pull --quiet --ff-only 2>"$ERR_FILE" &
+    PULL_PID=$!
+    ( sleep "${CLAUDE_MEMORY_PULL_TIMEOUT:-5}"; kill "$PULL_PID" 2>/dev/null ) >/dev/null 2>&1 &
+    WATCH_PID=$!
+    PULL_RC=0
+    wait "$PULL_PID" || PULL_RC=$?
+    kill "$WATCH_PID" 2>/dev/null || true
+    if [ "$PULL_RC" -ne 0 ]; then
       {
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] start.sh: pull --ff-only failed"
         cat "$ERR_FILE" 2>/dev/null || true
@@ -162,6 +175,29 @@ ensure_local_ignored() {
   fi
 }
 
+# ── パス指定ルール → ~/.claude/rules/ ──
+# 記憶リポジトリのrules/*.mdを配る。pathsを持つルールは該当ファイルを読んだときだけ読み込まれるので、
+# UIの規則のように常時は要らないものをglobal.mdから外せる。
+# 配ったファイル名を記録し、記憶リポジトリから消えたものだけを消す。利用者が自分で置いたルールは触らない
+RULES_MANIFEST="$LOG_DIR/claude-memory-sync.rules"
+if [ -d "$MEMORY_DIR/rules" ] || [ -f "$RULES_MANIFEST" ]; then
+  mkdir -p "$CLAUDE_DIR/rules"
+  NEW_MANIFEST=$(mktemp "${TMPDIR:-/tmp}/cms-rules.XXXXXX")
+  for rule in "$MEMORY_DIR"/rules/*.md; do
+    [ -f "$rule" ] || continue
+    name=$(basename "$rule")
+    cmp -s "$rule" "$CLAUDE_DIR/rules/$name" || cp "$rule" "$CLAUDE_DIR/rules/$name"
+    echo "$name" >> "$NEW_MANIFEST"
+  done
+  if [ -f "$RULES_MANIFEST" ]; then
+    while IFS= read -r name; do
+      case "$name" in */*|""|.*) continue ;; esac
+      grep -qxF "$name" "$NEW_MANIFEST" || rm -f "$CLAUDE_DIR/rules/$name"
+    done < "$RULES_MANIFEST"
+  fi
+  mv "$NEW_MANIFEST" "$RULES_MANIFEST"
+fi
+
 # 注入する内容がなければ両方の注入先から既存ブロックを削除して終了
 if [ ! -f "$GLOBAL" ] && [ ! -f "$PROJECT" ]; then
   if [ -f "$CLAUDE_MD" ]; then
@@ -234,8 +270,37 @@ inject_into() {
   FINAL_TMP=$(mktemp "${TMPDIR:-/tmp}/cms-claude-md.XXXXXX")
 }
 
-# ── グローバル記憶 → ~/.claude/CLAUDE.md ──
-if [ -f "$GLOBAL" ]; then
+# ── グローバル記憶 ──
+# CLAUDE_MEMORY_GLOBAL_MODE=context のとき、CLAUDE.mdではなくSessionStartの出力として渡す。
+# CLAUDE.mdはSessionStartより先に読まれるため、書き換えが効くのは次のセッションからになる(実測)。
+# 出力なら、pull直後の内容をそのセッションで使える。公式の上限(10,000文字)を超えるときはCLAUDE.mdへ戻す
+GLOBAL_CONTEXT_LIMIT=9500
+global_as_context() {
+  [ "${CLAUDE_MEMORY_GLOBAL_MODE:-}" = "context" ] || return 1
+  # 見出しはglobal.md自身のものを使う(ここで足すと二重になる)
+  sanitize_memory "$GLOBAL" > "$TMPFILE"
+  # ロケールが合わずwc -mがバイト数を返しても、バイト数は文字数以上なので安全側(CLAUDE.mdへ戻す)に倒れる
+  local chars
+  chars=$(LC_ALL=en_US.UTF-8 wc -m < "$TMPFILE" 2>/dev/null | tr -d ' ' || echo 999999)
+  if [ "${chars:-999999}" -gt "$GLOBAL_CONTEXT_LIMIT" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] start.sh: global.md が ${chars} 文字で上限を超えるため CLAUDE.md へ注入" >> "$LOG_FILE"
+    return 1
+  fi
+  # 旧方式で書いたブロックが残っていると二重になるので消す
+  if [ -f "$CLAUDE_MD" ]; then
+    bash "$SKILL_DIR/hooks/cleanup.sh" "$CLAUDE_MD" >/dev/null 2>&1 || true
+  fi
+  # resumeでは前回の出力が会話に残っているので出さない
+  case "$HOOK_INPUT" in
+    *'"source":"resume"'*|*'"source": "resume"'*) ;;
+    *) cat "$TMPFILE" ;;
+  esac
+  return 0
+}
+
+if [ -f "$GLOBAL" ] && global_as_context; then
+  :
+elif [ -f "$GLOBAL" ]; then
   {
     echo "$INJECT_BEGIN"
     echo "<!-- 自動生成 / 編集不要 / claude-memory-sync が管理 -->"

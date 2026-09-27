@@ -87,7 +87,7 @@ Claude Code は毎セッション開始時にこの記憶を自動で読み込�
 │  │      project-b.md    │                                    │
 │  └──────────┬───────────┘                                    │
 │             │                                                  │
-│             │  UserPromptSubmit hook                           │
+│             │  SessionStart hook                               │
 │             │  (cd 先の git remote URL に応じて自動切替)       │
 │             ▼                                                  │
 │  ┌──────────────────────┐                                    │
@@ -339,12 +339,15 @@ cm                     # pull --rebase → secret scan → commit → push
 
 ### セッション終了時の動作
 
-`Stop` hook は以下の順で動きます:
+`Stop` hook（応答の終わり、非同期）と`SessionEnd` hook（セッション終了時）は以下の順で動きます:
 
-1. 記憶リポジトリに変更があるかチェック (なければ終了)
-2. **シークレットスキャナ**で変更内容を検査。API キー / 秘密鍵の典型パターンにマッチしたら commit を中止
-3. 問題がなければ `git commit`
-4. `CLAUDE_MEMORY_AUTO_PUSH=1` が設定されていれば自動 push (デフォルト: **off**)
+1. 記憶リポジトリに変更があれば、**シークレットスキャナ**で変更内容を検査。API キー / 秘密鍵の典型パターンにマッチしたら commit を中止
+2. 問題がなければ `git commit`
+3. `CLAUDE_MEMORY_AUTO_PUSH=1` が設定されていれば自動 push (デフォルト: **off**)。`Stop`では前回のpushから`CLAUDE_MEMORY_PUSH_INTERVAL`秒（既定600）経っているときだけ、`SessionEnd`では常にpushする。他のマシンが先にpushしていたら1回だけrebaseして再試行し、競合したらrebaseを戻してログに残す
+
+`Stop`でもpushするのは、ターミナルを閉じたときに`SessionEnd`が最後まで走る保証がないためです。記憶の取得（pull）と`CLAUDE.md`の合成は`SessionStart`で1回だけ行います。`CLAUDE.md`はセッション開始時と`/compact`後にしか読まれないため、プロンプトごとに合成しても効果がありません。
+
+`CLAUDE.md`は`SessionStart` hookより先に読み込まれるため、合成した内容が効くのは次のセッションからです（`claude -p`で実測）。`--global-context`を付けると、global.mdをhookの出力として渡すので、pull直後の内容がそのセッションで効きます。hookの出力には公式の上限（10,000文字）があるため、プロジェクト固有の記憶は`CLAUDE.local.md`のままです。記憶リポジトリの`rules/*.md`は`~/.claude/rules/`へコピーされ、`paths`を指定したルールは該当ファイルを読んだときだけ読み込まれます。
 
 push がデフォルト off なのは、Claude が誤って API キーを記憶ファイルに書き込んだときに意図せずリモートへ漏洩することを避けるため。日常的な push は `cm` を明示的に実行することを推奨します。
 
@@ -424,6 +427,7 @@ curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/
 ```bash
 CLAUDE_MEMORY_SKIP_SECRET_SCAN=1 cm     # シークレットスキャナをバイパス
 CLAUDE_MEMORY_AUTO_PUSH=1 claude        # セッション終了時に自動 push する
+node bin/setup.js --auto-push           # 自動pushをhookのコマンドに埋め込む（マシンごとに1回）
 ```
 
 後者は危険 (push 前に人間が確認できない) なので、**信頼できる環境でのみ** 使ってください。
@@ -456,7 +460,7 @@ cat ~/.claude/CLAUDE.md
 
 ```bash
 # hook が登録されているか確認
-cat ~/.claude/settings.json | grep -A 3 UserPromptSubmit
+cat ~/.claude/settings.json | grep -A 3 SessionStart
 
 # 手動で start.sh を実行してみる
 bash ~/.claude/skills/memory-sync/hooks/start.sh
@@ -528,7 +532,7 @@ A. どちらも CLAUDE.md に注入されて Claude が読みます。内容が�
 
 ### Q. Claude Code を使わないプロジェクトでも記憶は更新される?
 
-A. `UserPromptSubmit` / `Stop` hook は Claude Code を起動したときだけ発火するので、他のエディタ作業中には何も起きません。
+A. `SessionStart` / `Stop` / `SessionEnd` hook は Claude Code を起動したときだけ発火するので、他のエディタ作業中には何も起きません。
 
 ### Q. 記憶ファイルに GitHub token や API key を誤って書いてしまった
 
@@ -592,6 +596,9 @@ CLAUDE_MEMORY_SYNC_REPO=https://github.com/you/claude-memory-sync-fork \
 |---|---|---|
 | `CLAUDE_MEMORY_DIR` | 記憶リポジトリのパス | `~/.claude-memory` |
 | `CLAUDE_MEMORY_AUTO_PUSH` | `1` / `true` でセッション終了時の自動 push を有効化 | (off) |
+| `CLAUDE_MEMORY_PUSH_INTERVAL` | `Stop`でpushする最短間隔（秒） | `600` |
+| `CLAUDE_MEMORY_PULL_TIMEOUT` | `SessionStart`のpullを打ち切るまでの秒数 | `5` |
+| `CLAUDE_MEMORY_GLOBAL_MODE` | `context`のとき、global.mdを`CLAUDE.md`ではなく`SessionStart`の出力で渡す（`setup.js --global-context`で設定）。9,500文字を超えると`CLAUDE.md`へ戻す | (未設定) |
 | `CLAUDE_MEMORY_SKIP_SECRET_SCAN` | `1` / `true` でシークレットスキャナをバイパス | (off) |
 | `CLAUDE_MEMORY_SYNC_REPO` | install.sh が skill を clone する元 URL (fork / private mirror 用) | 本リポジトリ |
 | `EDITOR` | `cm edit` が使うエディタ | `nano` |
@@ -604,7 +611,7 @@ CLAUDE_MEMORY_SYNC_REPO=https://github.com/you/claude-memory-sync-fork \
 node ~/.claude/skills/memory-sync/bin/uninstall.js
 ```
 
-- マーカー付きで登録した `UserPromptSubmit` / `Stop` hook のみを `~/.claude/settings.json` から削除します
+- マーカー付きで登録した `SessionStart` / `Stop` / `SessionEnd` hook（旧版の`UserPromptSubmit`を含む）のみを `~/.claude/settings.json` から削除します
 - ユーザーが独自に登録した他の hook は触りません
 - `~/.claude/CLAUDE.md` の注入ブロックも自動で削除しますが、手書きコンテンツは保持されます
 - 記憶リポジトリ (`~/.claude-memory/`) は **削除されません**。不要なら手動で `rm -rf` してください
