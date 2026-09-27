@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, chmodSy
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = dirname(__dirname);
@@ -41,18 +42,19 @@ const MARKER = '_claude_memory_sync';
  * マーカーで識別するので、ユーザーが別途追加した hook は触らない。
  */
 // マーカー導入前に登録されたhookも自分のものとして扱う(再セットアップで二重登録しないため)
-function isOwned(entry) {
-  if (entry[MARKER]) return true;
-  return (entry.hooks ?? []).some((h) => {
-    const cmd = h.command ?? '';
-    return cmd.includes(HOOK_START) || cmd.includes(HOOK_STOP);
-  });
+function isOwnedCommand(h) {
+  const cmd = h.command ?? '';
+  return cmd.includes(HOOK_START) || cmd.includes(HOOK_STOP);
 }
 
 function removeOwnedHooks(eventName) {
   const list = settings.hooks[eventName];
   if (!Array.isArray(list)) return;
-  settings.hooks[eventName] = list.filter((entry) => !isOwned(entry));
+  settings.hooks[eventName] = list
+    .filter((entry) => !entry[MARKER])
+    // 旧版の登録はエントリの中に他のhookと同居していることがあるので、該当するhookだけを外す
+    .map((entry) => ({ ...entry, hooks: (entry.hooks ?? []).filter((h) => !isOwnedCommand(h)) }))
+    .filter((entry) => entry.hooks.length > 0);
   if (settings.hooks[eventName].length === 0) {
     delete settings.hooks[eventName];
   }
@@ -99,6 +101,19 @@ try {
   // chmod 失敗は致命的ではない
 }
 renameSync(tmpPath, SETTINGS_PATH);  // POSIX atomic rename
+
+// contextモードへ切り替えるときは、CLAUDE.mdに注入済みの旧ブロックをここで消す。
+// start.shで消しても、切り替え直後のセッションは消す前のCLAUDE.mdを読んでしまう
+if (GLOBAL_ENV) {
+  const claudeMd = join(CLAUDE_DIR, 'CLAUDE.md');
+  if (existsSync(claudeMd)) {
+    try {
+      execFileSync('bash', [HOOK_CLEANUP, claudeMd], { stdio: 'ignore' });
+    } catch {
+      console.error('[warn] CLAUDE.md の旧ブロックを消せませんでした。次のセッション開始時に消えます');
+    }
+  }
+}
 
 console.log('ok hook を ~/.claude/settings.json に登録しました');
 console.log(`  SessionStart:     ${HOOK_START}`);

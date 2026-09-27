@@ -56,6 +56,23 @@ rotate_log() {
 }
 rotate_log
 
+# StopとSessionEndは同じスクリプトを別プロセスで動かすので、リポジトリ単位で直列化する。
+# Stopは先行処理があれば何もせず終わる(次のStopかSessionEndが拾う)。SessionEndは最大25秒待つ
+LOCK_DIR="$LOG_DIR/claude-memory-sync.lock"
+# 10分より古いロックは、途中で落ちた処理の残骸として外す
+if [ -d "$LOCK_DIR" ] && [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+fi
+LOCK_WAIT=0
+LOCK_LIMIT=0
+[ "${CLAUDE_MEMORY_FINAL:-}" = "1" ] && LOCK_LIMIT=25
+until mkdir "$LOCK_DIR" 2>/dev/null; do
+  [ "$LOCK_WAIT" -ge "$LOCK_LIMIT" ] && exit 0
+  sleep 1
+  LOCK_WAIT=$((LOCK_WAIT + 1))
+done
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
 # 変更がある時だけcommitする(未pushのcommitが残っていれば、変更がなくてもpushへ進む)
 if [ -n "$(git status --porcelain)" ]; then
   # Secret scanner — 変更・新規ファイルに対して簡易パターンマッチ
@@ -92,8 +109,16 @@ case "$AUTO_PUSH" in
     # Stopでは前回のpushからINTERVAL秒経つまで待つ。SessionEnd (FINAL)は常にpushする
     STAMP="$LOG_DIR/claude-memory-sync.last-push"
     if [ "${CLAUDE_MEMORY_FINAL:-}" != "1" ] && [ -f "$STAMP" ]; then
-      LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
-      [ $(( $(date +%s) - LAST )) -ge "${CLAUDE_MEMORY_PUSH_INTERVAL:-600}" ] || exit 0
+      # 数値以外が入っていたら0として扱う(算術展開に任意の文字列を渡さない)
+      LAST=$(grep -E '^[0-9]+$' "$STAMP" 2>/dev/null | head -n 1 || true)
+      [ $(( $(date +%s) - ${LAST:-0} )) -ge "${CLAUDE_MEMORY_PUSH_INTERVAL:-600}" ] || exit 0
+    fi
+    # 未pushのcommitを検査する。scanを迂回したcommitが混ざっていてもpushしない(cm syncと同じ)
+    if [ -x "$SKILL_DIR/hooks/scan-secrets.sh" ]; then
+      if ! CLAUDE_MEMORY_SCAN_MODE=history "$SKILL_DIR/hooks/scan-secrets.sh" >/dev/null 2>&1; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] stop.sh: auto push aborted — potential secret detected in unpushed commits" >> "$LOG_FILE"
+        exit 1
+      fi
     fi
     if git remote | grep -q .; then
       # ネットワーク障害やリモート競合で session 終了を止めないよう || true
@@ -103,7 +128,8 @@ case "$AUTO_PUSH" in
       PUSHED=0
       if git push --quiet 2>"$ERR_FILE"; then
         PUSHED=1
-      elif git pull --rebase --quiet 2>>"$ERR_FILE"; then
+      # .md以外の追跡ファイルに未commitの変更があってもrebaseできるよう退避する
+      elif git pull --rebase --autostash --quiet >/dev/null 2>>"$ERR_FILE"; then
         git push --quiet 2>>"$ERR_FILE" && PUSHED=1
       else
         git rebase --abort 2>/dev/null || true

@@ -175,6 +175,29 @@ ensure_local_ignored() {
   fi
 }
 
+# ── パス指定ルール → ~/.claude/rules/ ──
+# 記憶リポジトリのrules/*.mdを配る。pathsを持つルールは該当ファイルを読んだときだけ読み込まれるので、
+# UIの規則のように常時は要らないものをglobal.mdから外せる。
+# 配ったファイル名を記録し、記憶リポジトリから消えたものだけを消す。利用者が自分で置いたルールは触らない
+RULES_MANIFEST="$LOG_DIR/claude-memory-sync.rules"
+if [ -d "$MEMORY_DIR/rules" ] || [ -f "$RULES_MANIFEST" ]; then
+  mkdir -p "$CLAUDE_DIR/rules"
+  NEW_MANIFEST=$(mktemp "${TMPDIR:-/tmp}/cms-rules.XXXXXX")
+  for rule in "$MEMORY_DIR"/rules/*.md; do
+    [ -f "$rule" ] || continue
+    name=$(basename "$rule")
+    cmp -s "$rule" "$CLAUDE_DIR/rules/$name" || cp "$rule" "$CLAUDE_DIR/rules/$name"
+    echo "$name" >> "$NEW_MANIFEST"
+  done
+  if [ -f "$RULES_MANIFEST" ]; then
+    while IFS= read -r name; do
+      case "$name" in */*|""|.*) continue ;; esac
+      grep -qxF "$name" "$NEW_MANIFEST" || rm -f "$CLAUDE_DIR/rules/$name"
+    done < "$RULES_MANIFEST"
+  fi
+  mv "$NEW_MANIFEST" "$RULES_MANIFEST"
+fi
+
 # 注入する内容がなければ両方の注入先から既存ブロックを削除して終了
 if [ ! -f "$GLOBAL" ] && [ ! -f "$PROJECT" ]; then
   if [ -f "$CLAUDE_MD" ]; then
@@ -246,18 +269,6 @@ inject_into() {
   # 次の inject_into 呼び出しに備えて tmpfile を作り直す (trap の対象を維持)
   FINAL_TMP=$(mktemp "${TMPDIR:-/tmp}/cms-claude-md.XXXXXX")
 }
-
-# ── パス指定ルール → ~/.claude/rules/ ──
-# 記憶リポジトリのrules/*.mdを配る。pathsを持つルールは該当ファイルを読んだときだけ読み込まれるので、
-# UIの規則のように常時は要らないものをglobal.mdから外せる。~/.claude/rules/の他のファイルは触らない
-if [ -d "$MEMORY_DIR/rules" ]; then
-  mkdir -p "$CLAUDE_DIR/rules"
-  for rule in "$MEMORY_DIR"/rules/*.md; do
-    [ -f "$rule" ] || continue
-    dst="$CLAUDE_DIR/rules/$(basename "$rule")"
-    cmp -s "$rule" "$dst" || cp "$rule" "$dst"
-  done
-fi
 
 # ── グローバル記憶 ──
 # CLAUDE_MEMORY_GLOBAL_MODE=context のとき、CLAUDE.mdではなくSessionStartの出力として渡す。
