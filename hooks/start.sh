@@ -29,6 +29,10 @@
 
 set -euo pipefail
 
+# hookの入力(JSON)。SessionStartのsource(startup/resume/clear/compact)を見る。手動実行で端末から呼ばれたときは読まない
+HOOK_INPUT=""
+[ -t 0 ] || HOOK_INPUT=$(cat 2>/dev/null || true)
+
 MEMORY_DIR="${CLAUDE_MEMORY_DIR:-$HOME/.claude-memory}"
 CLAUDE_DIR="$HOME/.claude"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
@@ -243,8 +247,49 @@ inject_into() {
   FINAL_TMP=$(mktemp "${TMPDIR:-/tmp}/cms-claude-md.XXXXXX")
 }
 
-# ── グローバル記憶 → ~/.claude/CLAUDE.md ──
-if [ -f "$GLOBAL" ]; then
+# ── パス指定ルール → ~/.claude/rules/ ──
+# 記憶リポジトリのrules/*.mdを配る。pathsを持つルールは該当ファイルを読んだときだけ読み込まれるので、
+# UIの規則のように常時は要らないものをglobal.mdから外せる。~/.claude/rules/の他のファイルは触らない
+if [ -d "$MEMORY_DIR/rules" ]; then
+  mkdir -p "$CLAUDE_DIR/rules"
+  for rule in "$MEMORY_DIR"/rules/*.md; do
+    [ -f "$rule" ] || continue
+    dst="$CLAUDE_DIR/rules/$(basename "$rule")"
+    cmp -s "$rule" "$dst" || cp "$rule" "$dst"
+  done
+fi
+
+# ── グローバル記憶 ──
+# CLAUDE_MEMORY_GLOBAL_MODE=context のとき、CLAUDE.mdではなくSessionStartの出力として渡す。
+# CLAUDE.mdはSessionStartより先に読まれるため、書き換えが効くのは次のセッションからになる(実測)。
+# 出力なら、pull直後の内容をそのセッションで使える。公式の上限(10,000文字)を超えるときはCLAUDE.mdへ戻す
+GLOBAL_CONTEXT_LIMIT=9500
+global_as_context() {
+  [ "${CLAUDE_MEMORY_GLOBAL_MODE:-}" = "context" ] || return 1
+  # 見出しはglobal.md自身のものを使う(ここで足すと二重になる)
+  sanitize_memory "$GLOBAL" > "$TMPFILE"
+  # ロケールが合わずwc -mがバイト数を返しても、バイト数は文字数以上なので安全側(CLAUDE.mdへ戻す)に倒れる
+  local chars
+  chars=$(LC_ALL=en_US.UTF-8 wc -m < "$TMPFILE" 2>/dev/null | tr -d ' ' || echo 999999)
+  if [ "${chars:-999999}" -gt "$GLOBAL_CONTEXT_LIMIT" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] start.sh: global.md が ${chars} 文字で上限を超えるため CLAUDE.md へ注入" >> "$LOG_FILE"
+    return 1
+  fi
+  # 旧方式で書いたブロックが残っていると二重になるので消す
+  if [ -f "$CLAUDE_MD" ]; then
+    bash "$SKILL_DIR/hooks/cleanup.sh" "$CLAUDE_MD" >/dev/null 2>&1 || true
+  fi
+  # resumeでは前回の出力が会話に残っているので出さない
+  case "$HOOK_INPUT" in
+    *'"source":"resume"'*|*'"source": "resume"'*) ;;
+    *) cat "$TMPFILE" ;;
+  esac
+  return 0
+}
+
+if [ -f "$GLOBAL" ] && global_as_context; then
+  :
+elif [ -f "$GLOBAL" ]; then
   {
     echo "$INJECT_BEGIN"
     echo "<!-- 自動生成 / 編集不要 / claude-memory-sync が管理 -->"

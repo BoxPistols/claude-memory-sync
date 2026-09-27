@@ -347,6 +347,8 @@ cm                     # pull --rebase → secret scan → commit → push
 
 `Stop`でもpushするのは、ターミナルを閉じたときに`SessionEnd`が最後まで走る保証がないためです。記憶の取得（pull）と`CLAUDE.md`の合成は`SessionStart`で1回だけ行います。`CLAUDE.md`はセッション開始時と`/compact`後にしか読まれないため、プロンプトごとに合成しても効果がありません。
 
+`CLAUDE.md`は`SessionStart` hookより先に読み込まれるため、合成した内容が効くのは次のセッションからです（`claude -p`で実測）。`--global-context`を付けると、global.mdをhookの出力として渡すので、pull直後の内容がそのセッションで効きます。hookの出力には公式の上限（10,000文字）があるため、プロジェクト固有の記憶は`CLAUDE.local.md`のままです。記憶リポジトリの`rules/*.md`は`~/.claude/rules/`へコピーされ、`paths`を指定したルールは該当ファイルを読んだときだけ読み込まれます。
+
 push がデフォルト off なのは、Claude が誤って API キーを記憶ファイルに書き込んだときに意図せずリモートへ漏洩することを避けるため。日常的な push は `cm` を明示的に実行することを推奨します。
 
 ---
@@ -596,6 +598,7 @@ CLAUDE_MEMORY_SYNC_REPO=https://github.com/you/claude-memory-sync-fork \
 | `CLAUDE_MEMORY_AUTO_PUSH` | `1` / `true` でセッション終了時の自動 push を有効化 | (off) |
 | `CLAUDE_MEMORY_PUSH_INTERVAL` | `Stop`でpushする最短間隔（秒） | `600` |
 | `CLAUDE_MEMORY_PULL_TIMEOUT` | `SessionStart`のpullを打ち切るまでの秒数 | `5` |
+| `CLAUDE_MEMORY_GLOBAL_MODE` | `context`のとき、global.mdを`CLAUDE.md`ではなく`SessionStart`の出力で渡す（`setup.js --global-context`で設定）。9,500文字を超えると`CLAUDE.md`へ戻す | (未設定) |
 | `CLAUDE_MEMORY_SKIP_SECRET_SCAN` | `1` / `true` でシークレットスキャナをバイパス | (off) |
 | `CLAUDE_MEMORY_SYNC_REPO` | install.sh が skill を clone する元 URL (fork / private mirror 用) | 本リポジトリ |
 | `EDITOR` | `cm edit` が使うエディタ | `nano` |

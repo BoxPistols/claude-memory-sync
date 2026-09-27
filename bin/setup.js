@@ -79,7 +79,9 @@ const PUSH_ENV = AUTO_PUSH ? 'CLAUDE_MEMORY_AUTO_PUSH=1 ' : '';
 // CLAUDE.mdはセッション開始時と/compact後にしか読まれないので、pullと合成はセッション開始時の1回だけ行う。
 // 旧版が登録したUserPromptSubmitのhookもここで除去する
 for (const event of Object.keys(settings.hooks)) removeOwnedHooks(event);
-installHook('SessionStart', `bash "${HOOK_START}"`);
+// --global-context: global.mdをCLAUDE.mdではなくSessionStartの出力で渡す(pull直後の内容がそのセッションで効く)
+const GLOBAL_ENV = process.argv.includes('--global-context') ? 'CLAUDE_MEMORY_GLOBAL_MODE=context ' : '';
+installHook('SessionStart', `${GLOBAL_ENV}bash "${HOOK_START}"`);
 // 応答の終わり: commitと間隔を空けたpush。応答を待たせないよう非同期
 installHook('Stop', `${PUSH_ENV}bash "${HOOK_STOP}"`, { async: true });
 // 終了時: 間隔に関係なくpushまで終える
