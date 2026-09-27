@@ -57,21 +57,33 @@ rotate_log() {
 rotate_log
 
 # StopとSessionEndは同じスクリプトを別プロセスで動かすので、リポジトリ単位で直列化する。
-# Stopは先行処理があれば何もせず終わる(次のStopかSessionEndが拾う)。SessionEndは最大25秒待つ
+# Stopは先行処理があれば何もせず終わる(次のStopかSessionEndが拾う)。SessionEndは最大15秒待つ
+# (SessionEndのtimeoutは60秒なので、待った後もcommitとpushに45秒残る)
 LOCK_DIR="$LOG_DIR/claude-memory-sync.lock"
-# 10分より古いロックは、途中で落ちた処理の残骸として外す
-if [ -d "$LOCK_DIR" ] && [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
-  rmdir "$LOCK_DIR" 2>/dev/null || true
-fi
+# 持ち主のプロセスが終了しているロックだけを、途中で落ちた処理の残骸として外す。
+# プロセスIDを書く前の一瞬を誤判定しないよう、IDが無いロックは1分経つまで残す
+lock_is_stale() {
+  local pid
+  pid=$(cat "$LOCK_DIR/pid" 2>/dev/null || true)
+  case "$pid" in
+    ''|*[!0-9]*) [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ] ;;
+    *) ! kill -0 "$pid" 2>/dev/null ;;
+  esac
+}
 LOCK_WAIT=0
 LOCK_LIMIT=0
-[ "${CLAUDE_MEMORY_FINAL:-}" = "1" ] && LOCK_LIMIT=25
+[ "${CLAUDE_MEMORY_FINAL:-}" = "1" ] && LOCK_LIMIT=15
 until mkdir "$LOCK_DIR" 2>/dev/null; do
+  if [ -d "$LOCK_DIR" ] && lock_is_stale; then
+    rm -rf "$LOCK_DIR"
+    continue
+  fi
   [ "$LOCK_WAIT" -ge "$LOCK_LIMIT" ] && exit 0
   sleep 1
   LOCK_WAIT=$((LOCK_WAIT + 1))
 done
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+echo $$ > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
 
 # 変更がある時だけcommitする(未pushのcommitが残っていれば、変更がなくてもpushへ進む)
 if [ -n "$(git status --porcelain)" ]; then

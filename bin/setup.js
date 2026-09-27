@@ -87,7 +87,7 @@ installHook('SessionStart', `${GLOBAL_ENV}bash "${HOOK_START}"`);
 // 応答の終わり: commitと間隔を空けたpush。応答を待たせないよう非同期
 installHook('Stop', `${PUSH_ENV}bash "${HOOK_STOP}"`, { async: true });
 // 終了時: 間隔に関係なくpushまで終える
-installHook('SessionEnd', `${PUSH_ENV}CLAUDE_MEMORY_FINAL=1 bash "${HOOK_STOP}"`, { timeout: 30 });
+installHook('SessionEnd', `${PUSH_ENV}CLAUDE_MEMORY_FINAL=1 bash "${HOOK_STOP}"`, { timeout: 60 });
 
 // Atomic write: 一時ファイル → rename で差し替える
 // writeFileSync だけだと途中クラッシュで settings.json が truncate され、
