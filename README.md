@@ -342,7 +342,7 @@ cm                     # pull --rebase → secret scan → commit → push
 `Stop` hook（応答の終わり、非同期）と`SessionEnd` hook（セッション終了時）は以下の順で動きます:
 
 1. 記憶リポジトリに変更があれば、**シークレットスキャナ**で変更内容を検査。API キー / 秘密鍵の典型パターンにマッチしたら commit を中止
-2. 問題がなければ `git commit`
+2. 問題がなければ `git commit`。対象は`.md`ファイルと、すでに追跡しているファイルの変更（`git add -u`）。スクリプトなど`.md`以外を同期したいときは、記憶リポジトリの`.gitignore`で許可して一度だけ手で`git add`する。以後の変更は自動でcommitされる
 3. `CLAUDE_MEMORY_AUTO_PUSH=1` が設定されていれば自動 push (デフォルト: **off**)。`Stop`では前回のpushから`CLAUDE_MEMORY_PUSH_INTERVAL`秒（既定600）経っているときだけ、`SessionEnd`では常にpushする。他のマシンが先にpushしていたら1回だけrebaseして再試行し、競合したらrebaseを戻してログに残す
 
 `Stop`でもpushするのは、ターミナルを閉じたときに`SessionEnd`が最後まで走る保証がないためです。記憶の取得（pull）と`CLAUDE.md`の合成は`SessionStart`で1回だけ行います。`CLAUDE.md`はセッション開始時と`/compact`後にしか読まれないため、プロンプトごとに合成しても効果がありません。

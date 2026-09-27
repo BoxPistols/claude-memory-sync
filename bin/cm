@@ -163,6 +163,9 @@ case "$CMD" in
     # -A は untracked ディレクトリ配下の新規 .md も拾うために必要。
     # pathspec '*.md' により .env など他形式は除外される。
     git add -A -- '*.md'
+    # 追跡済みのファイル(.gitignoreで許可して意図的に追加したスクリプトなど)の変更も含める。
+    # -uは新しいファイルを追加しないので、未追跡の.envなどは入らない。変更は上のscan-secretsが検査済み
+    git add -u
     echo ""
     echo "▶ 変更ファイル:"
     git status --short

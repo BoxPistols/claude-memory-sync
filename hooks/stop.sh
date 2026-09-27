@@ -104,8 +104,11 @@ if [ -n "$(git status --porcelain)" ]; then
   # -A は untracked ディレクトリ配下の新規 .md も拾うために必要。
   # pathspec '*.md' により .env など他形式は除外される。
   git add -A -- '*.md'
+  # 追跡済みのファイル(.gitignoreで許可して意図的に追加したスクリプトなど)の変更も含める。
+  # -uは新しいファイルを追加しないので、未追跡の.envなどは入らない。変更は上のscan-secretsが検査済み
+  git add -u
 
-  # .md 以外の変更のみの場合はステージング対象がなく commit 不要
+  # 未追跡の.md以外のファイルだけが変わった場合はステージング対象がなく commit 不要
   if [ -n "$(git diff --cached --name-only)" ]; then
     git commit -m "auto: ${REPO} ${TIMESTAMP}" --quiet
   fi
