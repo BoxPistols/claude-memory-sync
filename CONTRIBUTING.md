@@ -10,7 +10,7 @@ claude-memory-sync への貢献方法。
 - `node --version` と `git --version`
 - 発生した現象と期待していた動作
 - 再現手順
-- 該当すれば `/tmp/claude-memory-sync.log` の内容
+- 該当すれば `~/.claude/logs/claude-memory-sync.log` の内容
 
 ## 開発セットアップ
 
@@ -31,18 +31,17 @@ ln -s "$(pwd)" ~/.claude/skills/memory-sync
 
 ## テスト
 
-ユニットテストはまだありません。以下を手動で通してから PR を出してください:
+CI と同じ smoke test (scan-secrets / stop.sh / `cm sync` / start.sh の注入先) をローカルで実行できます。`HOME` を一時ディレクトリに差し替えて動くので、手元の記憶や `~/.claude` には触れません。
 
 ```bash
+npm test
+
 # shellcheck (install: brew install shellcheck)
 shellcheck install.sh hooks/*.sh bin/cm
 
 # node scripts の構文チェック
 node --check bin/setup.js
 node --check bin/uninstall.js
-
-# scan-secrets の動作確認
-CLAUDE_MEMORY_DIR=/tmp/test-mem bash hooks/scan-secrets.sh
 ```
 
 ## コミットメッセージ規約

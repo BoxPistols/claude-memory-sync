@@ -9,8 +9,8 @@
   "scripts": {
     "setup": "node bin/setup.js",
     "uninstall": "node bin/uninstall.js",
-    "lint:sh": "shellcheck install.sh hooks/*.sh bin/cm",
-    "test": "echo 'no unit tests yet'"
+    "lint:sh": "shellcheck install.sh hooks/*.sh bin/cm tests/*.sh",
+    "test": "bash tests/smoke.sh"
   },
   "engines": {
     "node": ">=18"
