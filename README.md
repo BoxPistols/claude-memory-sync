@@ -1,37 +1,67 @@
 # claude-memory-sync
 
-Claude Code にセッション間の記憶を持たせる自作メモリ層。**外部サービス不要・コストゼロ・Git で完全自己管理。**
+個人の開発方針と、プロジェクトごとに溜めた記憶をプライベート Git リポジトリで複数 PC に同期し、Claude Code のセッション開始時に流し込む hook セット。外部サービスは使いません。
 
 [![CI](https://github.com/BoxPistols/claude-memory-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/BoxPistols/claude-memory-sync/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-## TL;DR
+```bash
+curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/install.sh | bash
+```
 
-毎回 Claude Code に「MUI の sx は px 禁止」「pnpm を使う」などを言い直していませんか?
-このツールを入れると、そういう方針を `~/.claude-memory/global.md` に書いておくだけで、**次回起動時から Claude Code が自動的に覚えています**。プロジェクトごとの文脈は `repos/{project-key}.md` に分かれて保存され、ディレクトリを移動するだけで切り替わります。
+## 実行例
 
-記憶はあなた自身のプライベート Git リポジトリ上にあるので、**外部サービスにソースコードが送信されることは一切ありません**。複数 PC でも `git push/pull` で同期できます。
+記憶リポジトリ (`~/.claude-memory`) に `global.md` と `repos/github.com-you-my-app.md` がある状態で、`my-app` で Claude Code を起動したときに `SessionStart` hook (`hooks/start.sh`) が書き出す内容です (一時 `HOME` で実際に実行した出力)。
+
+```console
+$ cat ~/.claude/CLAUDE.md
+# 手書きの内容 (そのまま残る)
+<!-- claude-memory-sync:begin -->
+<!-- 自動生成 / 編集不要 / claude-memory-sync が管理 -->
+
+## グローバル設計方針
+
+- パッケージ管理は pnpm
+- MUI の sx は spacing 単位で書く (px 禁止)
+
+<!-- claude-memory-sync:end -->
+
+$ cat CLAUDE.local.md
+<!-- claude-memory-sync:begin -->
+<!-- 自動生成 / 編集不要 / claude-memory-sync が管理 -->
+
+## プロジェクト固有の記憶 (github.com-you-my-app)
+
+- API クライアントは src/lib/api.ts に集約する
+
+<!-- claude-memory-sync:end -->
+
+$ git status --short     # CLAUDE.local.md は .git/info/exclude に入るので出てこない
+$
+```
+
+## 見どころ
+
+- **注入先をセッション単位で分ける**: 全プロジェクト共通の `global.md` は `~/.claude/CLAUDE.md` へ、プロジェクト固有の `repos/<key>.md` は `<project-root>/CLAUDE.local.md` へ書く。複数リポジトリで同時に起動しても記憶が混ざらない — [`hooks/start.sh`](./hooks/start.sh)
+- **commit 前のシークレット検査と commit 対象の絞り込み**: API キー・秘密鍵のパターンを検出したら commit を止め、`.md` と追跡済みファイル以外は stage しない — [`hooks/scan-secrets.sh`](./hooks/scan-secrets.sh) / [`hooks/stop.sh`](./hooks/stop.sh)
+- **既存設定を壊さない hook 登録**: マーカー付きで `~/.claude/settings.json` に登録し、再実行しても二重にならず、アンインストールでは自分の hook だけを外す。挙動は CI の smoke test で確認 — [`bin/setup.js`](./bin/setup.js) / [`tests/smoke.sh`](./tests/smoke.sh)
 
 ---
 
 ## もくじ
 
-- [TL;DR](#tldr)
 - [何を解決するか (before / after)](#何を解決するか-before--after)
 - [アーキテクチャ](#アーキテクチャ)
-- [特徴](#特徴)
 - [Getting Started (5 分)](#getting-started-5-分)
 - [日常の使い方](#日常の使い方)
 - [記憶ファイルの書き方](#記憶ファイルの書き方)
 - [注入の仕組み](#注入の仕組み)
 - [複数 PC 運用](#複数-pc-運用)
 - [セキュリティ](#セキュリティ)
-- [トラブルシューティング](#トラブルシューティング)
-- [FAQ](#faq)
+- [既知のトレードオフ](#既知のトレードオフ)
 - [環境変数](#環境変数)
 - [アンインストール](#アンインストール)
-- [コントリビューション](#コントリビューション)
-- [License](#license)
+- トラブルシューティング / FAQ: [docs/troubleshooting.md](./docs/troubleshooting.md) / [docs/faq.md](./docs/faq.md)
 
 ---
 
@@ -48,7 +78,6 @@ Claude: 「申し訳ない。sx={{ padding: 2 }} に修正します」
 — 翌日 —
 あなた: 「この Button に margin 足して」
 Claude: 「sx={{ margin: '8px' }} に...」
-あなた: 😩
 ```
 
 ### After (claude-memory-sync を入れた後)
@@ -61,74 +90,51 @@ Claude: 「sx={{ margin: '8px' }} に...」
 
 あなた: 「このコンポーネントに sx で padding 追加して」
 Claude: 「sx={{ padding: 2 }} で追加しました」
-
-あなた: 😊
 ```
 
-Claude Code は毎セッション開始時にこの記憶を自動で読み込みます。指示し直す必要はありません。
+記憶はセッション開始時に `CLAUDE.md` / `CLAUDE.local.md` へ書き出され、Claude Code がそれを読み込みます。反映のタイミングは [注入の仕組み](#注入の仕組み) を参照してください。
 
 ---
 
 ## アーキテクチャ
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  あなたの Mac                                                 │
-│                                                                │
-│  ┌──────────────────────┐                                    │
-│  │  ~/.claude-memory/   │ ← あなた専用のプライベート         │
-│  │  (Git リポジトリ)     │   Git リポジトリ (GitHub等)        │
-│  │                      │                                    │
-│  │  global.md           │ ← 全 PJ 共通の方針 (手動編集)       │
-│  │  repos/              │                                    │
-│  │    github.com-you-   │ ← PJ 固有の記憶 (Claude が追記)     │
-│  │      project-a.md    │                                    │
-│  │    github.com-you-   │                                    │
-│  │      project-b.md    │                                    │
-│  └──────────┬───────────┘                                    │
-│             │                                                  │
-│             │  SessionStart hook                               │
-│             │  (cd 先の git remote URL に応じて自動切替)       │
-│             ▼                                                  │
-│  ┌──────────────────────┐                                    │
-│  │ ~/.claude/CLAUDE.md  │ ← グローバル CLAUDE.md に注入       │
-│  │  (手書きの内容…)     │                                    │
-│  │  <!-- cms:begin -->  │ ← begin/end マーカーで sandwich     │
-│  │  (global.md の内容)  │                                    │
-│  │  (repos/*.md の内容) │                                    │
-│  │  <!-- cms:end -->    │                                    │
-│  └──────────┬───────────┘                                    │
-│             │                                                  │
-│             ▼                                                  │
-│        Claude Code                                             │
-│        (毎セッション、この記憶を読んでから動作)                 │
-└──────────────────────────────────────────────────────────────┘
+  ~/.claude-memory/  (プライベート Git リポジトリ)
+  ├── global.md                       全プロジェクト共通の方針 (手で書く)
+  ├── repos/github.com-you-my-app.md  プロジェクト固有の記憶 (Claude が追記)
+  └── rules/*.md                      パス指定ルール (任意)
+          │
+          │ SessionStart hook (hooks/start.sh)
+          │   1. git pull --ff-only (既定 5 秒で打ち切り)
+          │   2. cwd の git remote URL からプロジェクトキーを決める
+          ▼
+  ~/.claude/CLAUDE.md          ← global.md を begin/end マーカーの間に注入
+  <project-root>/CLAUDE.local.md ← repos/<key>.md を注入 (.git/info/exclude に追記)
+  ~/.claude/rules/             ← rules/*.md をコピー
+          │
+          ▼
+  Claude Code が読み込む
 
-  プロジェクト内の CLAUDE.md には一切書きません。
-  OSS リポジトリを汚しません。
+  Stop hook (非同期) / SessionEnd hook (hooks/stop.sh)
+    シークレット検査 → commit → (CLAUDE_MEMORY_AUTO_PUSH=1 のときだけ) push
 ```
 
 ### 設計上の決めごと
 
-- **プロジェクトを汚さない**: 注入先は `~/.claude/CLAUDE.md` (グローバル) のみ。リポジトリ内の `CLAUDE.md` は触らないので、OSS / チーム共有リポジトリでも安全
+- **追跡対象のファイルを書き換えない**: 書き込むのは `~/.claude/CLAUDE.md` (グローバル) と、プロジェクト直下の `CLAUDE.local.md` だけ。`CLAUDE.local.md` は `.git/info/exclude` に追記して git の管理外にするので、リポジトリの `CLAUDE.md` や `.gitignore` は変わらない
 - **記憶は Git 管理**: プライベート Git リポジトリに置くので、バックアップ・履歴・複数 PC 同期が全て Git の仕組みで完結
 - **自動 push はデフォルト OFF**: Claude が誤って API キー等を書き込んだ場合にリモートへ漏洩しないよう、push は `cm` コマンドで明示的に実行することを推奨
 - **シークレットスキャナ内蔵**: commit 前に `sk-*`, `ghp_*`, `AWS AKIA*`, JWT, PEM 等の典型パターンを検出
 
----
+### 特徴
 
-## 特徴
+- **外部サービス不要** — 全ての記憶はあなた自身の Git リポジトリに
+- **複数 PC 対応** — `cm` コマンドで git pull / push するだけ
+- **複数リポジトリ対応** — git remote URL ベースの slug で記憶を自動で切り替える
+- **opt-in な自動 push** — 意図しないリモート反映を防止
+- **クリーンなアンインストール** — 自分が登録した hook と注入ブロックだけを削除
 
-- ✨ **プロジェクトを汚さない** — 注入先は `~/.claude/CLAUDE.md` のみ
-- 🔒 **外部サービス不要** — 全ての記憶はあなた自身の Git リポジトリに
-- 💻 **複数 PC 対応** — `cm` コマンドで git pull / push するだけ
-- 📁 **複数リポジトリ対応** — ディレクトリごとに記憶を自動切替
-- 🎯 **プロジェクト衝突回避** — git remote URL ベースの slug で識別
-- 🛡️ **シークレットスキャナ内蔵** — API キー / 秘密鍵の誤 commit を防ぐ
-- 🟢 **opt-in な自動 push** — 意図しないリモート反映を防止
-- 🧹 **クリーンなアンインストール** — 自分が登録した hook だけを削除
-
-(上記は機能要約です。実装の詳細は [CHANGELOG.md](./CHANGELOG.md) を参照)
+(実装の変遷は [CHANGELOG.md](./CHANGELOG.md) を参照)
 
 ---
 
@@ -231,7 +237,7 @@ cm status
 claude
 ```
 
-起動すると `~/.claude/CLAUDE.md` に Step 3 で書いた方針が自動注入されます。試しに何か頼んでみて、記憶が効いているか確認してください。
+起動すると `~/.claude/CLAUDE.md` に Step 3 で書いた方針が自動注入されます。`CLAUDE.md` は hook より先に読み込まれるため、内容が効くのは次に起動したセッションからです (`setup.js --global-context` を使うと同じセッションから効きます。詳細は [注入の仕組み](#注入の仕組み))。もう一度 `claude` を起動し、記憶が効いているか確認してください。
 
 **確認の小ネタ**: Claude に「今ロードされているメモリを要約して」と聞くと、注入内容が見えます。
 
@@ -272,7 +278,7 @@ cm                     # pull --rebase → secret scan → commit → push
 | `cm status` | ファイル一覧 + ahead/behind + 未 commit 変更 + 最終 commit |
 | `cm log` | 最近の commit 10 件 |
 | `cm edit` | `global.md` を `$EDITOR` で開く |
-| `cm clean` | `~/.claude/CLAUDE.md` から注入ブロックを削除 (再インストール時など) |
+| `cm clean` | `~/.claude/CLAUDE.md` と `./CLAUDE.local.md` から注入ブロックを削除 (再インストール時など) |
 | `cm --help` | ヘルプ表示 |
 
 ---
@@ -322,20 +328,24 @@ cm                     # pull --rebase → secret scan → commit → push
 
 ## 注入の仕組み
 
-`~/.claude/CLAUDE.md` (グローバル) にのみ書き込みます。プロジェクト内の `CLAUDE.md` には一切触りません。
+書き込み先は 2 箇所です。リポジトリで追跡されている `CLAUDE.md` には触りません。
 
 ```
-~/.claude/CLAUDE.md
+~/.claude/CLAUDE.md                     (全プロジェクト共通)
   (あなたの手書きコンテンツ — そのまま残る)
   <!-- claude-memory-sync:begin -->
     ## グローバル設計方針
     (global.md の内容)
+  <!-- claude-memory-sync:end -->
+
+<project-root>/CLAUDE.local.md          (そのプロジェクトだけ)
+  <!-- claude-memory-sync:begin -->
     ## プロジェクト固有の記憶 (github.com-you-project-a)
     (repos/github.com-you-project-a.md の内容)
   <!-- claude-memory-sync:end -->
 ```
 
-`begin` / `end` マーカーで sandwich されているので、セッション開始ごとにブロック内だけが再生成されます。ユーザーの手書きコンテンツは上書きされません。
+`begin` / `end` マーカーで挟んだブロックの中だけを再生成するので、手書きの内容は上書きされません。内容が前回と同じなら書き込み自体を省きます。`CLAUDE.local.md` は git に追跡されていなければ `.git/info/exclude` に追記してから書きます。プロジェクトに記憶が無くなった場合は前回のブロックを削除します。
 
 ### セッション終了時の動作
 
@@ -367,7 +377,7 @@ curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/
 
 ### 同期のタイミング
 
-- **セッション開始時**: `git pull --ff-only` で最新を自動取得 (失敗は `/tmp/claude-memory-sync.log` に記録)
+- **セッション開始時**: `git pull --ff-only` で最新を自動取得 (失敗は `~/.claude/logs/claude-memory-sync.log` に記録)
 - **セッション終了時**: `git commit` (push はデフォルト off)
 - **手動**: `cm` で pull → commit → push を明示実行
 
@@ -383,7 +393,7 @@ curl -fsSL https://raw.githubusercontent.com/BoxPistols/claude-memory-sync/main/
 
 本ツールは以下の前提で動きます:
 
-1. **memory リポジトリに書き込める人 = あなたの Claude Code の振る舞いを実質的に操作できる人**です。memory repo の内容は `~/.claude/CLAUDE.md` に注入され、Claude Code の全セッションのプロンプトになります。プロンプトインジェクションで情報漏洩・不正指示を仕込むことが可能です
+1. **memory リポジトリに書き込める人 = あなたの Claude Code の振る舞いを実質的に操作できる人**です。memory repo の内容は `~/.claude/CLAUDE.md` と各プロジェクトの `CLAUDE.local.md` に注入され、Claude Code のセッションのプロンプトになります。プロンプトインジェクションで情報漏洩・不正指示を仕込むことが可能です
 2. したがって memory repo は **必ず private** にしてください。public にすると全世界がコンテンツを見られるだけでなく、PR 経由であなたの CLAUDE.md に任意のプロンプトを仕込まれる可能性があります
 3. **collaborator 権限を与える相手は慎重に選んで**ください。信頼できない相手に write 権限を与えるのは、あなたの Claude セッションを渡すのと等価です
 4. `~/.claude/skills/memory-sync/hooks/*.sh` を上書きできる人 (= あなたのホームディレクトリに書き込める人) は、セッション開始のたびに任意コードを実行できます。**ホームディレクトリのパーミッションを 700 / 750 に保って**ください
@@ -434,159 +444,20 @@ node bin/setup.js --auto-push           # 自動pushをhookのコマンドに埋
 
 ---
 
-## トラブルシューティング
+## 既知のトレードオフ
 
-### `cm: command not found`
+### セッション開始時の pull は同期的に待つ
 
-インストール時に `~/.local/bin` が PATH に入っていません。
+`SessionStart` hook は記憶を最新にしてから注入するため、`git pull --ff-only` の完了を待ちます。オフラインやリモートの応答が遅いときにセッション開始が止まらないよう、`CLAUDE_MEMORY_PULL_TIMEOUT` 秒 (既定 5) で pull を打ち切り、手元の記憶で続行します (失敗は `~/.claude/logs/claude-memory-sync.log` に記録)。待ち時間を減らしたい場合はこの値を小さくしてください。
 
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # zsh の場合
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # bash の場合
-source ~/.zshrc   # または新しいターミナルを開く
-```
+### 旧版の `UserPromptSubmit` hook が残っている場合
 
-### 記憶が Claude に注入されていない気がする
-
-まず手動で確認:
+以前の版は `UserPromptSubmit` (プロンプト送信ごと) に `start.sh` を登録していたため、プロンプトのたびに `git pull` が走っていました。現在の版は `SessionStart` でのみ実行します。旧版から更新したマシンでは `~/.claude/settings.json` に古い登録が残っていることがあるので、`node ~/.claude/skills/memory-sync/bin/setup.js` を再実行してください。旧登録を外してから現在の hook を登録し直します。
 
 ```bash
-cat ~/.claude/CLAUDE.md
+# 残っているか確認
+grep -n UserPromptSubmit ~/.claude/settings.json
 ```
-
-`<!-- claude-memory-sync:begin -->` から `:end -->` までのブロックがあればインジェクションは成功しています。
-
-もしブロックが無い場合:
-
-```bash
-# hook が登録されているか確認
-cat ~/.claude/settings.json | grep -A 3 SessionStart
-
-# 手動で start.sh を実行してみる
-bash ~/.claude/skills/memory-sync/hooks/start.sh
-```
-
-それでも動かない場合は `/tmp/claude-memory-sync.log` を見てみてください。
-
-### `cm sync` で pull が失敗する
-
-リモートと分岐している可能性があります。
-
-```bash
-cd ~/.claude-memory
-git status        # 未コミットの変更があるか確認
-git log --oneline -5
-git fetch
-git log origin/main --oneline -5
-```
-
-手動で `git pull --rebase` して競合を解決してから、もう一度 `cm sync`。
-
-### scan-secrets が誤検出している (正当な内容が block された)
-
-一時的にバイパスするには:
-
-```bash
-CLAUDE_MEMORY_SKIP_SECRET_SCAN=1 cm sync
-```
-
-ただし、本当に機密情報が紛れていないかは必ず自分で確認してください。
-
-### hook が自分の別の hook と衝突している / 消えた
-
-本ツールはマーカー (`_claude_memory_sync: true`) 付きで hook を登録するため、同イベントに別の hook があっても干渉しません。逆に本ツール以外の hook が壊れている場合は、本ツールとは無関係の問題です。
-
-### アンインストール後に記憶が残っている
-
-それは意図通りです。`~/.claude-memory/` は `uninstall.js` では削除されません。
-
-```bash
-rm -rf ~/.claude-memory   # 完全削除
-```
-
-### 既存の `~/.claude/CLAUDE.md` を壊しそうで怖い
-
-手書きのコンテンツは絶対に触らないので大丈夫ですが、念のため:
-
-```bash
-cp ~/.claude/CLAUDE.md ~/.claude/CLAUDE.md.backup
-```
-
-でバックアップを取ってから始めることをおすすめします。
-
----
-
-## FAQ
-
-### Q. Claude Code 本体のメモリ機能 (`~/.claude/projects/*/memory/`) との違いは?
-
-A. Claude Code 組み込みのメモリはプロジェクトごとにローカル保存されるだけで、**複数 PC 間の同期・Git 履歴・バックアップが無い**。本ツールは同じ問題を Git で解決し、さらに `global.md` (全 PJ 共通) という概念を追加します。両者は併用できます。
-
-### Q. プロジェクト内の `CLAUDE.md` は読まれないの?
-
-A. 読まれます。本ツールが触るのは **グローバルの `~/.claude/CLAUDE.md`** だけなので、プロジェクトの `CLAUDE.md` はそのまま Claude Code が読み込みます。両方とも有効です。
-
-### Q. global.md と repos/*.md が両方ある場合、どちらが優先される?
-
-A. どちらも CLAUDE.md に注入されて Claude が読みます。内容が矛盾した場合の動作は未定義です。矛盾しないように書いてください。一般には「global.md は一般方針」「repos/*.md は例外やプロジェクト固有」という切り分けが自然です。
-
-### Q. Claude Code を使わないプロジェクトでも記憶は更新される?
-
-A. `SessionStart` / `Stop` / `SessionEnd` hook は Claude Code を起動したときだけ発火するので、他のエディタ作業中には何も起きません。
-
-### Q. 記憶ファイルに GitHub token や API key を誤って書いてしまった
-
-A. セッション終了時または `cm sync` 実行時にシークレットスキャナが検出して commit を中止します。記憶ファイルから該当行を削除して再実行してください。
-
-もし既に push してしまった場合は、**即座に該当トークンを revoke** して、git history を書き換え (`git filter-repo` など) してください。この場合の対応は本ツールの責務を超えます。
-
-### Q. 20 リポジトリで使いたい
-
-A. 問題ありません。プロジェクト固有の記憶は `repos/{git-remote-slug}.md` に分離され、注入先も `<project-root>/CLAUDE.local.md` とプロジェクトごとに分かれるので、何個でも並行可能です。global.md は全プロジェクトで共有され、`~/.claude/CLAUDE.md` へ注入されます。
-
-> **v0.1.x までの注意**: 以前はプロジェクト固有の記憶も `~/.claude/CLAUDE.md`（全セッション共有）へ注入していました。複数リポジトリで Claude Code を**同時起動**すると後勝ちで上書きされ、別リポジトリの記憶が混入する不具合がありました。現在は注入先を分離して解消しています。
-
-### Q. 別リポジトリが物理的にネストしている場合は？
-
-A. **この 1 パターンだけ、親の記憶が子セッションに読まれます（既知の制限）。**
-
-Claude Code は cwd から親ディレクトリを遡り、各階層の `CLAUDE.md` / `CLAUDE.local.md` を読み込みます（公式ドキュメント: 「checking each directory along the way」）。そのため `/repo-a/repo-b/`（別リポジトリが物理的に内包されている構成）で作業すると、`repo-b` のセッションは `/repo-a/CLAUDE.local.md` も読みます。
-
-これは Claude Code のメモリ読み込み仕様によるもので、本ツール側では回避できません。
-
-**入れ子を解消できるなら、そちらが確実です。** 同じ経路で親の**追跡対象の `CLAUDE.md`**（別プロジェクトの指示そのもの）も読み込まれており、これは記憶ツールとは無関係の問題なので設定では塞ぎきれません。ディレクトリを並列に移せば両方まとめて消えます。
-
-移動できない場合は `claudeMdExcludes` で除外してください。
-
-```json
-// .claude/settings.local.json
-{
-  "claudeMdExcludes": ["**/repo-a/**"]
-}
-```
-
-`~/.claude/settings.json` / `./.claude/settings.json` / `./.claude/settings.local.json` のいずれでも設定でき、設定層ごとに配列がマージされます。ただし組織のマネージドポリシーで配布された `CLAUDE.md` は除外できません。
-
-> **未確認**: 遡査がファイルシステムのどこまで続くか、`.git` の境界で止まるかは公式ドキュメントに明記がありません。上記は「親ディレクトリを遡る」という記載から導かれる挙動です。
-
-### Q. Windows でも動く?
-
-A. **macOS / Linux 前提**です。`install.sh` と shell hook が POSIX シェルを要求します。WSL2 なら動くはずですが検証していません。
-
-### Q. Zsh じゃなく別のシェルでも動く?
-
-A. `install.sh` の PATH 自動追記プロンプトは zsh / bash を認識します。fish / nushell 等を使っている場合は手動で `~/.local/bin` を PATH に追加してください。フック本体は `/bin/bash` で動くので、ログインシェルが何であれ問題ありません。
-
-### Q. fork して自分で改造したい
-
-A. `CLAUDE_MEMORY_SYNC_REPO` 環境変数を設定して install.sh を実行すると、そのリポジトリから clone します。
-
-```bash
-CLAUDE_MEMORY_SYNC_REPO=https://github.com/you/claude-memory-sync-fork \
-  ./install.sh
-```
-
-または開発中なら `~/.claude/skills/memory-sync` を fork リポジトリへのシンボリックリンクにしても OK です。詳しくは [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
 
 ---
 
@@ -613,7 +484,7 @@ node ~/.claude/skills/memory-sync/bin/uninstall.js
 
 - マーカー付きで登録した `SessionStart` / `Stop` / `SessionEnd` hook（旧版の`UserPromptSubmit`を含む）のみを `~/.claude/settings.json` から削除します
 - ユーザーが独自に登録した他の hook は触りません
-- `~/.claude/CLAUDE.md` の注入ブロックも自動で削除しますが、手書きコンテンツは保持されます
+- `~/.claude/CLAUDE.md` の注入ブロックも自動で削除しますが、手書きコンテンツは保持されます。各プロジェクトの `CLAUDE.local.md` は対象外なので、必要ならプロジェクト直下で `cm clean` を実行するか削除してください
 - 記憶リポジトリ (`~/.claude-memory/`) は **削除されません**。不要なら手動で `rm -rf` してください
 
 ---

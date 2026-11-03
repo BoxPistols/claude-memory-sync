@@ -18,7 +18,7 @@ Claude Code のセッション間で設計方針・知見を永続化するス�
 
 ## セッション開始時の動作
 
-1. 記憶リポジトリが Git 管理であれば `git pull --ff-only` を試行 (失敗しても続行、`/tmp/claude-memory-sync.log` にログ)
+1. 記憶リポジトリが Git 管理であれば `git pull --ff-only` を試行 (失敗しても続行、`~/.claude/logs/claude-memory-sync.log` にログ)
 2. `~/.claude-memory/global.md` を読み込む
 3. `~/.claude-memory/repos/{project-key}.md` が存在すれば読み込む
 4. `<!-- claude-memory-sync:begin -->` 〜 `<!-- claude-memory-sync:end -->` マーカーで包んで、**注入先を分けて**書き込む
